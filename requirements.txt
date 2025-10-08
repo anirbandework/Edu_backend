@@ -46,3 +46,7 @@ google-generativeai==0.3.2
 gunicorn==21.2.0      # Production WSGI server
 prometheus-fastapi-instrumentator==6.1.0  # Monitoring
 structlog==23.2.0     # Better logging
+
+
+
+greenlet>=2.0.0
