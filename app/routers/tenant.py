@@ -18,14 +18,24 @@ router = APIRouter(prefix="/api/v1/tenants", tags=["Tenant Management"])
 async def get_tenants(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
+    include_inactive: bool = Query(False, description="Include deactivated schools"),
     db: AsyncSession = Depends(get_db)
 ):
+    """Get all tenants with pagination - active tenants by default"""
     service = BaseService(Tenant, db)
-    result = await service.get_paginated(page=page, size=size)
+    
+    # Use the include_inactive parameter in the service call
+    result = await service.get_paginated(
+        page=page, 
+        size=size, 
+        include_inactive=include_inactive
+    )
+    
     formatted_tenants = [
-        TenantSchema.model_validate(tenant)  # Changed from from_orm to model_validate
+        TenantSchema.model_validate(tenant)
         for tenant in result["items"]
     ]
+    
     return {
         "items": formatted_tenants,
         "total": result["total"],
@@ -33,7 +43,8 @@ async def get_tenants(
         "size": result["size"],
         "has_next": result["has_next"],
         "has_previous": result["has_previous"],
-        "total_pages": result["total_pages"]
+        "total_pages": result["total_pages"],
+        "showing": "all schools" if include_inactive else "active schools only"
     }
 
 @router.post("/", response_model=TenantSchema)
@@ -42,7 +53,7 @@ async def create_tenant(
     db: AsyncSession = Depends(get_db)
 ):
     service = BaseService(Tenant, db)
-    tenant_dict = tenant_data.model_dump()  # Changed from dict() to model_dump()
+    tenant_dict = tenant_data.model_dump()
     
     # Generate school_code if not provided
     if not tenant_dict.get("school_code"):
@@ -176,13 +187,33 @@ async def update_tenant(
 @router.delete("/{tenant_id}")
 async def delete_tenant(
     tenant_id: UUID,
+    hard_delete: bool = Query(False, description="Permanently delete instead of deactivating"),
     db: AsyncSession = Depends(get_db)
 ):
     service = BaseService(Tenant, db)
-    success = await service.soft_delete(tenant_id)
-    if not success:
+    
+    if hard_delete:
+        success = await service.hard_delete(tenant_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="School not found")
+        return {"message": "School deleted permanently"}
+    else:
+        success = await service.soft_delete(tenant_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="School not found")
+        return {"message": "School deactivated successfully"}
+
+@router.patch("/{tenant_id}/reactivate")
+async def reactivate_tenant(
+    tenant_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """Reactivate a deactivated school"""
+    service = BaseService(Tenant, db)
+    tenant = await service.update(tenant_id, {"is_active": True})
+    if not tenant:
         raise HTTPException(status_code=404, detail="School not found")
-    return {"message": "School deactivated successfully"}
+    return {"message": "School reactivated successfully"}
 
 @router.get("/{tenant_id}/stats")
 async def get_tenant_stats(
@@ -195,6 +226,7 @@ async def get_tenant_stats(
         raise HTTPException(status_code=404, detail="School not found")
     return {
         "school_name": tenant.school_name,
+        "is_active": tenant.is_active,
         "total_students": tenant.total_students,
         "total_teachers": tenant.total_teachers,
         "total_staff": tenant.total_staff,
@@ -206,10 +238,11 @@ async def get_tenant_stats(
 
 @router.get("/summary/all")
 async def get_tenants_summary(
+    include_inactive: bool = Query(False, description="Include deactivated schools"),
     db: AsyncSession = Depends(get_db)
 ):
     service = BaseService(Tenant, db)
-    tenants = await service.get_multi(skip=0, limit=1000)
+    tenants = await service.get_multi(skip=0, limit=1000, include_inactive=include_inactive)
     return [
         {
             "id": str(tenant.id),
@@ -221,6 +254,22 @@ async def get_tenants_summary(
         }
         for tenant in tenants
     ]
+
+@router.get("/stats/overview")
+async def get_tenants_overview(db: AsyncSession = Depends(get_db)):
+    """Get overview statistics of all tenants"""
+    service = BaseService(Tenant, db)
+    
+    active_count = await service.get_active_count()
+    total_count = await service.get_total_count()
+    inactive_count = total_count - active_count
+    
+    return {
+        "total_schools": total_count,
+        "active_schools": active_count,
+        "inactive_schools": inactive_count,
+        "activation_rate": round((active_count / total_count * 100), 2) if total_count > 0 else 0
+    }
 
 # Additional endpoint to check for duplicates before creating
 @router.post("/check-duplicate", response_model=dict)
@@ -255,7 +304,8 @@ async def check_duplicate_tenant(
                 "school_name": existing_tenant.school_name,
                 "email": existing_tenant.email,
                 "phone": existing_tenant.phone,
-                "address": existing_tenant.address
+                "address": existing_tenant.address,
+                "is_active": existing_tenant.is_active
             }
         }
     else:
