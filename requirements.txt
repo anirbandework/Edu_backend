@@ -1,52 +1,102 @@
 
 
 
+# asyncpg==0.29.0
+
+
+
+# redis==5.0.1
+
+
+
+
+# # Core FastAPI and ASGI Server
+# fastapi==0.104.1
+# uvicorn[standard]==0.24.0
+
+# # Database and ORM
+# sqlalchemy==2.0.23
+# psycopg2-binary==2.9.9
+# alembic==1.12.1
+
+# # Data Validation and Serialization
+# pydantic==2.5.0
+# pydantic-settings==2.1.0
+# email-validator==2.1.0  # Add this line
+
+# # Authentication and Security
+# python-jose[cryptography]==3.3.0
+# passlib[bcrypt]==1.7.4
+# python-multipart==0.0.6
+# PyJWT==2.8.0
+# cryptography==41.0.7
+
+# # Configuration and Environment
+# python-dotenv==1.0.0
+
+# # HTTP Client
+# httpx==0.25.2
+
+
+# # Google Gemini AI
+# google-generativeai==0.3.2
+
+
+# # Consider adding for production:
+# gunicorn==21.2.0      # Production WSGI server
+# prometheus-fastapi-instrumentator==6.1.0  # Monitoring
+# structlog==23.2.0     # Better logging
+
+
+
+# greenlet>=2.0.0
+
+
+# Ultra-stable, widely-tested versions
 asyncpg==0.29.0
-
-
-
 redis==5.0.1
 
-
-
-
-# Core FastAPI and ASGI Server
-fastapi==0.104.1
+# Core stack - battle-tested
+fastapi==0.104.1  
 uvicorn[standard]==0.24.0
 
-# Database and ORM
-sqlalchemy==2.0.23
-psycopg2-binary==2.9.9
+# Database - stable
+sqlalchemy==2.0.25
 alembic==1.12.1
 
-# Data Validation and Serialization
-pydantic==2.5.0
+# Data validation - stable  
+pydantic==2.5.3
 pydantic-settings==2.1.0
-email-validator==2.1.0  # Add this line
+email-validator==2.1.0
 
-# Authentication and Security
+# Bulk operations essentials
+pandas==2.1.4
+openpyxl==3.1.2
+python-multipart==0.0.6
+
+# Security - known good versions
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
-python-multipart==0.0.6
 PyJWT==2.8.0
-cryptography==41.0.7
+cryptography==41.0.7  # This version definitely exists
 
-# Configuration and Environment
+# Configuration
 python-dotenv==1.0.0
 
 # HTTP Client
 httpx==0.25.2
 
-
-# Google Gemini AI
+# AI
 google-generativeai==0.3.2
 
+# Production
+gunicorn==21.2.0
 
-# Consider adding for production:
-gunicorn==21.2.0      # Production WSGI server
-prometheus-fastapi-instrumentator==6.1.0  # Monitoring
-structlog==23.2.0     # Better logging
+# File processing
+chardet==5.2.0
 
-
+# Performance  
+orjson==3.9.10
 
 greenlet>=2.0.0
+typing-extensions>=4.8.0
