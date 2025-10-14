@@ -1,14 +1,15 @@
+# app/routers/school_authority/teacher.py
 from typing import List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, EmailStr
 from datetime import datetime
-from ...core.database import get_db  # Updated import path (3 levels up)
-from ...models.tenant_specific.teacher import Teacher  # Updated import path
-from ...services.teacher_service import TeacherService  # Updated import path
+from ...core.database import get_db
+from ...models.tenant_specific.teacher import Teacher
+from ...services.teacher_service import TeacherService
 
-# Pydantic Models (same as before)
+# Existing Pydantic Models
 class TeacherCreate(BaseModel):
     tenant_id: UUID
     teacher_id: str
@@ -32,9 +33,31 @@ class TeacherUpdate(BaseModel):
     performance_evaluation: Optional[dict] = None
     status: Optional[str] = None
 
+# NEW BULK OPERATION MODELS
+class BulkTeacherImport(BaseModel):
+    tenant_id: UUID
+    teachers: List[dict]
+
+class BulkStatusUpdate(BaseModel):
+    tenant_id: UUID
+    teacher_ids: List[str]
+    new_status: str
+
+class BulkSubjectAssignment(BaseModel):
+    tenant_id: UUID
+    assignments: List[dict]  # [{"teacher_id": "TCH001", "subjects": [{"subject": "Math", "grade": 10}]}]
+
+class BulkSalaryUpdate(BaseModel):
+    tenant_id: UUID
+    salary_updates: List[dict]  # [{"teacher_id": "TCH001", "new_salary": 60000, "effective_date": "2024-01-01"}]
+
+class BulkDeleteRequest(BaseModel):
+    tenant_id: UUID
+    teacher_ids: List[str]
+
 router = APIRouter(prefix="/api/v1/school_authority/teachers", tags=["School Authority - Teacher Management"])
 
-
+# EXISTING ENDPOINTS (unchanged)
 @router.get("/", response_model=dict)
 async def get_teachers(
     page: int = Query(1, ge=1),
@@ -219,3 +242,111 @@ async def get_teachers_by_subject(
         }
         for teacher in teachers
     ]
+
+# NEW BULK OPERATION ENDPOINTS
+
+@router.post("/bulk/import", response_model=dict)
+async def bulk_import_teachers(
+    import_data: BulkTeacherImport,
+    db: AsyncSession = Depends(get_db)
+):
+    """Bulk import teachers from CSV/JSON data"""
+    service = TeacherService(db)
+    
+    result = await service.bulk_import_teachers(
+        teachers_data=import_data.teachers,
+        tenant_id=import_data.tenant_id
+    )
+    
+    return {
+        "message": f"Bulk import completed. {result['successful_imports']} teachers imported successfully",
+        **result
+    }
+
+@router.post("/bulk/update-status", response_model=dict)
+async def bulk_update_status(
+    status_data: BulkStatusUpdate,
+    db: AsyncSession = Depends(get_db)
+):
+    """Bulk update teacher status"""
+    service = TeacherService(db)
+    
+    result = await service.bulk_update_status(
+        teacher_ids=status_data.teacher_ids,
+        new_status=status_data.new_status,
+        tenant_id=status_data.tenant_id
+    )
+    
+    return {
+        "message": f"Status update completed. {result['updated_teachers']} teachers updated to '{result['new_status']}'",
+        **result
+    }
+
+@router.post("/bulk/assign-subjects", response_model=dict)
+async def bulk_assign_subjects(
+    assignment_data: BulkSubjectAssignment,
+    db: AsyncSession = Depends(get_db)
+):
+    """Bulk assign subjects to teachers"""
+    service = TeacherService(db)
+    
+    result = await service.bulk_assign_subjects(
+        subject_assignments=assignment_data.assignments,
+        tenant_id=assignment_data.tenant_id
+    )
+    
+    return {
+        "message": f"Subject assignment completed. {result['updated_teachers']} teachers updated",
+        **result
+    }
+
+@router.post("/bulk/update-salaries", response_model=dict)
+async def bulk_update_salaries(
+    salary_data: BulkSalaryUpdate,
+    db: AsyncSession = Depends(get_db)
+):
+    """Bulk update teacher salaries"""
+    service = TeacherService(db)
+    
+    result = await service.bulk_salary_update(
+        salary_updates=salary_data.salary_updates,
+        tenant_id=salary_data.tenant_id
+    )
+    
+    return {
+        "message": f"Salary update completed. {result['updated_teachers']} teachers updated",
+        **result
+    }
+
+@router.post("/bulk/delete", response_model=dict)
+async def bulk_delete_teachers(
+    delete_data: BulkDeleteRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """Bulk soft delete teachers"""
+    service = TeacherService(db)
+    
+    result = await service.bulk_soft_delete(
+        teacher_ids=delete_data.teacher_ids,
+        tenant_id=delete_data.tenant_id
+    )
+    
+    return {
+        "message": f"Bulk delete completed. {result['deleted_teachers']} teachers deactivated",
+        **result
+    }
+
+@router.get("/statistics/{tenant_id}", response_model=dict)
+async def get_teacher_statistics(
+    tenant_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """Get comprehensive teacher statistics for a school"""
+    service = TeacherService(db)
+    
+    stats = await service.get_teacher_statistics(tenant_id)
+    
+    return {
+        "message": "Teacher statistics retrieved successfully",
+        **stats
+    }

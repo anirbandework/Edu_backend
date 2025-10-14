@@ -44,8 +44,7 @@ class Student(Base):  # Changed from BaseModel to Base
     
     # Relationships
     tenant = relationship("Tenant", back_populates="students")
-    # Note: Remove relationships that don't exist yet
-    # enrollments = relationship("Enrollment", back_populates="student")
+    enrollments = relationship("Enrollment", back_populates="student")
     # grades = relationship("Grade", back_populates="student")
     # attendances = relationship("Attendance", back_populates="student")
     # chat_rooms = relationship("ChatRoom", back_populates="student")

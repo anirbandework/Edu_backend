@@ -15,6 +15,9 @@ from app.models.shared.tenant import Tenant  # Import your models so they regist
 from app.models.tenant_specific.school_authority import SchoolAuthority  # ADD THIS LINE
 from app.models.tenant_specific.teacher import Teacher
 from app.models.tenant_specific.student import Student
+from app.models.tenant_specific.class_model import ClassModel
+from app.models.tenant_specific.enrollment import Enrollment
+
 
 config = context.config
 
