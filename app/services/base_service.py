@@ -2,10 +2,13 @@
 """Base service with common CRUD operations."""
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
-from typing import Type, Any, Dict, Optional, List
+from typing import Type, Any, Dict, Optional, List, TypeVar, Generic
 
-class BaseService:
-    def __init__(self, model: Type[Any], db: AsyncSession):
+# Define generic type
+T = TypeVar('T')
+
+class BaseService(Generic[T]):
+    def __init__(self, model: Type[T], db: AsyncSession):
         self.model = model
         self.db = db
 
@@ -14,13 +17,13 @@ class BaseService:
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def get_multi(self, skip: int = 0, limit: int = 100, include_inactive: bool = False):
+    async def get_multi(self, skip: int = 0, limit: int = 100, include_deleted: bool = False):
         stmt = select(self.model).offset(skip).limit(limit)
         
-        # Add active filter if model has is_active field and include_inactive is False
-        if hasattr(self.model, 'is_active') and not include_inactive:
-            stmt = stmt.where(self.model.is_active == True)
-            
+        # Add soft delete filter if model has is_deleted field
+        if hasattr(self.model, 'is_deleted') and not include_deleted:
+            stmt = stmt.where(self.model.is_deleted == False)
+        
         result = await self.db.execute(stmt)
         return result.scalars().all()
 
@@ -28,43 +31,42 @@ class BaseService:
         self, 
         page: int = 1, 
         size: int = 20, 
-        include_inactive: bool = False,
-        additional_filters: List = None
+        include_deleted: bool = False,
+        **filters
     ):
-        """Get paginated results with optional active/inactive filtering"""
+        """Get paginated results with optional soft delete filtering"""
         offset = (page - 1) * size
         
-        # Build base queries
+        # Build base query
+        stmt = select(self.model)
+        
+        # Add soft delete filter if model has is_deleted field
+        if hasattr(self.model, 'is_deleted') and not include_deleted:
+            stmt = stmt.where(self.model.is_deleted == False)
+        
+        # Add additional filters
+        for key, value in filters.items():
+            if hasattr(self.model, key):
+                stmt = stmt.where(getattr(self.model, key) == value)
+        
+        # Get total count
         count_stmt = select(func.count()).select_from(self.model)
-        data_stmt = select(self.model).offset(offset).limit(size)
+        if hasattr(self.model, 'is_deleted') and not include_deleted:
+            count_stmt = count_stmt.where(self.model.is_deleted == False)
         
-        # Collect all filter conditions
-        filter_conditions = []
+        # Add filters to count query too
+        for key, value in filters.items():
+            if hasattr(self.model, key):
+                count_stmt = count_stmt.where(getattr(self.model, key) == value)
         
-        # Add active filter if model has is_active field and include_inactive is False
-        if hasattr(self.model, 'is_active') and not include_inactive:
-            filter_conditions.append(self.model.is_active == True)
-        
-        # Add any additional filters
-        if additional_filters:
-            filter_conditions.extend(additional_filters)
-        
-        # Apply filters to both queries
-        if filter_conditions:
-            if len(filter_conditions) == 1:
-                filter_condition = filter_conditions[0]
-            else:
-                filter_condition = and_(*filter_conditions)
-                
-            count_stmt = count_stmt.where(filter_condition)
-            data_stmt = data_stmt.where(filter_condition)
-        
-        # Execute queries
+        # Execute count query
         count_result = await self.db.execute(count_stmt)
         total = count_result.scalar()
         
-        data_result = await self.db.execute(data_stmt)
-        items = data_result.scalars().all()
+        # Execute main query with pagination
+        stmt = stmt.offset(offset).limit(size)
+        result = await self.db.execute(stmt)
+        items = result.scalars().all()
         
         return {
             "items": items,
@@ -76,14 +78,14 @@ class BaseService:
             "has_previous": page > 1,
         }
 
-    async def create(self, obj_in: Dict):
+    async def create(self, obj_in: Dict) -> T:
         obj = self.model(**obj_in)
         self.db.add(obj)
         await self.db.commit()
         await self.db.refresh(obj)
         return obj
 
-    async def update(self, id: Any, obj_in: Dict):
+    async def update(self, id: Any, obj_in: Dict) -> Optional[T]:
         obj = await self.get(id)
         if not obj:
             return None
@@ -93,36 +95,35 @@ class BaseService:
         await self.db.refresh(obj)
         return obj
 
-    async def soft_delete(self, id: Any):
+    async def soft_delete(self, id: Any) -> bool:
         obj = await self.get(id)
         if not obj:
-            return None
-        if hasattr(obj, "is_active"):
-            obj.is_active = False
+            return False
+        if hasattr(obj, "is_deleted"):
+            obj.is_deleted = True
             await self.db.commit()
             return True
         return False
 
-    async def hard_delete(self, id: Any):
+    async def hard_delete(self, id: Any) -> bool:
         """Permanently delete record from database"""
         obj = await self.get(id)
         if not obj:
-            return None
+            return False
         await self.db.delete(obj)
         await self.db.commit()
         return True
 
-    async def get_active_count(self):
-        """Get count of active records only"""
-        if not hasattr(self.model, 'is_active'):
-            return await self.get_total_count()
-        
-        count_stmt = select(func.count()).select_from(self.model).where(self.model.is_active == True)
-        result = await self.db.execute(count_stmt)
+    async def get_active_count(self) -> int:
+        """Get count of non-deleted records"""
+        stmt = select(func.count()).select_from(self.model)
+        if hasattr(self.model, 'is_deleted'):
+            stmt = stmt.where(self.model.is_deleted == False)
+        result = await self.db.execute(stmt)
         return result.scalar()
 
-    async def get_total_count(self):
-        """Get total count including inactive records"""
-        count_stmt = select(func.count()).select_from(self.model)
-        result = await self.db.execute(count_stmt)
+    async def get_total_count(self) -> int:
+        """Get total count including soft-deleted records"""
+        stmt = select(func.count()).select_from(self.model)
+        result = await self.db.execute(stmt)
         return result.scalar()

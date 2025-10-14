@@ -6,18 +6,23 @@ import logging
 import time
 from sqlalchemy import text  # ADDED MISSING IMPORT
 
+
 from .core.config import settings
 from .core.database import engine, background_engine, close_db_connections, get_pool_status
 from .core.cache import cache_manager
 from .routers.health import router as health_router
 from .routers.tenant import router as tenant_router
 from .routers.bulk_tenant import router as bulk_tenant_router
+from .routers.school_authority import router as school_authority_router
+from .routers.school_authority_management.teacher import router as teacher_router
+from .routers.school_authority_management.student import router as student_router
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -73,6 +78,7 @@ async def lifespan(app: FastAPI):
     
     logger.info("Application shutdown complete")
 
+
 # Create FastAPI app with enhanced lifespan
 app = FastAPI(
     title="EduAssist Backend API",
@@ -80,6 +86,7 @@ app = FastAPI(
     version=settings.app_version,
     lifespan=lifespan
 )
+
 
 @app.middleware("http")
 async def add_process_time_header(request: Request, call_next):
@@ -113,6 +120,7 @@ async def add_process_time_header(request: Request, call_next):
     
     return response
 
+
 # CORS configuration
 app.add_middleware(
     CORSMiddleware,
@@ -123,10 +131,14 @@ app.add_middleware(
     max_age=3600,
 )
 
+
 # Include routers
 app.include_router(health_router)
 app.include_router(tenant_router)
 app.include_router(bulk_tenant_router)
+app.include_router(school_authority_router)
+app.include_router(teacher_router)
+app.include_router(student_router)
 
 # Root endpoint
 @app.get("/")
@@ -136,11 +148,13 @@ async def root():
         "version": settings.app_version,
         "features": [
             "Tenant Management",
-            "Connection Pooling"
+            "School Authority Management",  # UPDATED FEATURES LIST
+            "Connection Pooling",
             "Bulk Operations",  
             "Background Processing",
         ]
     }
+
 
 # Health check with pool status
 @app.get("/system/status")
@@ -158,12 +172,15 @@ async def system_status():
         "environment": settings.environment,
         "database_pools": pool_status,
         "features": {
+            "tenant_management": True,
+            "school_authority_management": True,  # NEW FEATURE FLAG
             "bulk_operations": True,  # Set to True when implemented
             "background_tasks": True,  # Set to True when implemented
             "connection_pooling": True,
             "cache_manager": True
         }
     }
+
 
 if __name__ == "__main__":
     import uvicorn
