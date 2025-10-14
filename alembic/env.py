@@ -39,6 +39,19 @@ from app.models.tenant_specific.attendance import (
     AttendanceAlert
 )
 
+from app.models.tenant_specific.timetable import (
+    MasterTimetable,
+    Period,
+    ClassTimetable,
+    TeacherTimetable,
+    Subject,
+    ScheduleEntry,
+    TimetableConflict,
+    TimetableTemplate,
+    TimetableAuditLog
+)
+
+
 config = context.config
 
 # Get the database URL from env or .ini
