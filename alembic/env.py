@@ -1,3 +1,4 @@
+# alembic/env.py
 from logging.config import fileConfig
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -11,13 +12,24 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Import your base and ALL model classes
 from app.models.base import Base
-from app.models.shared.tenant import Tenant  # Import your models so they register with Base.metadata
-from app.models.tenant_specific.school_authority import SchoolAuthority  # ADD THIS LINE
+from app.models.shared.tenant import Tenant
+from app.models.tenant_specific.school_authority import SchoolAuthority
 from app.models.tenant_specific.teacher import Teacher
 from app.models.tenant_specific.student import Student
 from app.models.tenant_specific.class_model import ClassModel
 from app.models.tenant_specific.enrollment import Enrollment
 
+# NEW: Import FIXED notification models (no more metadata conflict)
+from app.models.tenant_specific.notification import (
+    Notification,
+    NotificationRecipient,
+    NotificationTemplate,
+    NotificationDeliveryLog,
+    NotificationPreference,
+    NotificationGroup,
+    NotificationSchedule,
+    NotificationBatch
+)
 
 config = context.config
 
