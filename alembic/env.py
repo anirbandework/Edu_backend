@@ -31,6 +31,14 @@ from app.models.tenant_specific.notification import (
     NotificationBatch
 )
 
+from app.models.tenant_specific.attendance import (
+    Attendance,
+    AttendanceSummary,
+    AttendancePolicy,
+    AttendanceReport,
+    AttendanceAlert
+)
+
 config = context.config
 
 # Get the database URL from env or .ini
