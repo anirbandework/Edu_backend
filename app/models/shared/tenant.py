@@ -37,9 +37,9 @@ class Tenant(Base):
     language_of_instruction = Column(String(20), default="English")
     
     # Relationships
-    # authorities = relationship("SchoolAuthority", back_populates="tenant", cascade="all, delete-orphan")
-    # teachers = relationship("Teacher", back_populates="tenant", cascade="all, delete-orphan")
-    # students = relationship("Student", back_populates="tenant", cascade="all, delete-orphan")
+    authorities = relationship("SchoolAuthority", back_populates="tenant", cascade="all, delete-orphan")
+    teachers = relationship("Teacher", back_populates="tenant", cascade="all, delete-orphan")
+    students = relationship("Student", back_populates="tenant", cascade="all, delete-orphan")
     # classes = relationship("ClassModel", back_populates="tenant", cascade="all, delete-orphan")
     
     # Table-level unique constraints to prevent duplicate schools
