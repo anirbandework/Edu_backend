@@ -12,10 +12,11 @@ from .core.database import engine, background_engine, close_db_connections, get_
 from .core.cache import cache_manager
 from .routers.health import router as health_router
 from .routers.tenant import router as tenant_router
-from .routers.bulk_tenant import router as bulk_tenant_router
 from .routers.school_authority import router as school_authority_router
 from .routers.school_authority_management.teacher import router as teacher_router
 from .routers.school_authority_management.student import router as student_router
+from .routers.school_authority_management.class_management import router as class_router
+from .routers.school_authority_management.enrollment import router as enrollment_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -135,10 +136,12 @@ app.add_middleware(
 # Include routers
 app.include_router(health_router)
 app.include_router(tenant_router)
-app.include_router(bulk_tenant_router)
 app.include_router(school_authority_router)
 app.include_router(teacher_router)
 app.include_router(student_router)
+app.include_router(class_router)
+app.include_router(enrollment_router)
+
 
 # Root endpoint
 @app.get("/")

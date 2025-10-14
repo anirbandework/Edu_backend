@@ -1,14 +1,15 @@
+# app/routers/school_authority.py (base router, not the subdirectory)
 from typing import List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.ext.asyncio import AsyncSession  # Changed from Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, EmailStr
 from datetime import datetime
 from ..core.database import get_db
 from ..models.tenant_specific.school_authority import SchoolAuthority
 from ..services.school_authority_service import SchoolAuthorityService
 
-# Pydantic Models
+# Existing Pydantic Models
 class AuthorityCreate(BaseModel):
     tenant_id: UUID
     authority_id: str
@@ -41,30 +42,37 @@ class AuthorityUpdate(BaseModel):
     school_overview: Optional[dict] = None
     contact_info: Optional[dict] = None
 
-class AuthorityResponse(BaseModel):
-    id: str
-    tenant_id: str
-    authority_id: str
-    first_name: str
-    last_name: str
-    email: str
-    phone: str
-    position: str
-    status: str
-    created_at: str
-    updated_at: str
-    
-    class Config:
-        from_attributes = True
+# NEW BULK OPERATION MODELS
+class BulkAuthorityImport(BaseModel):
+    tenant_id: UUID
+    authorities: List[dict]
+
+class BulkStatusUpdate(BaseModel):
+    tenant_id: UUID
+    authority_ids: List[str]
+    new_status: str
+
+class BulkPermissionUpdate(BaseModel):
+    tenant_id: UUID
+    permission_updates: List[dict]  # [{"authority_id": "AUTH001", "permissions": {...}}]
+
+class BulkPositionUpdate(BaseModel):
+    tenant_id: UUID
+    position_updates: List[dict]  # [{"authority_id": "AUTH001", "new_position": "Vice Principal"}]
+
+class BulkDeleteRequest(BaseModel):
+    tenant_id: UUID
+    authority_ids: List[str]
 
 router = APIRouter(prefix="/api/v1/authorities", tags=["School Authority"])
 
+# EXISTING ENDPOINTS (unchanged, but with proper async)
 @router.get("/", response_model=dict)
 async def get_authorities(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
     tenant_id: Optional[UUID] = Query(None),
-    db: AsyncSession = Depends(get_db)  # Changed to AsyncSession
+    db: AsyncSession = Depends(get_db)
 ):
     """Get paginated school authorities"""
     service = SchoolAuthorityService(db)
@@ -74,7 +82,7 @@ async def get_authorities(
         filters["tenant_id"] = tenant_id
     
     try:
-        result = await service.get_paginated(page=page, size=size, **filters)  # Added await
+        result = await service.get_paginated(page=page, size=size, **filters)
         
         formatted_authorities = [
             {
@@ -110,13 +118,13 @@ async def get_authorities(
 @router.post("/", response_model=dict)
 async def create_authority(
     authority_data: AuthorityCreate,
-    db: AsyncSession = Depends(get_db)  # Changed to AsyncSession
+    db: AsyncSession = Depends(get_db)
 ):
     """Create new school authority"""
     service = SchoolAuthorityService(db)
     
     authority_dict = authority_data.model_dump()
-    authority = await service.create(authority_dict)  # Added await
+    authority = await service.create(authority_dict)
     
     return {
         "id": str(authority.id),
@@ -127,11 +135,11 @@ async def create_authority(
 @router.get("/{authority_id}", response_model=dict)
 async def get_authority(
     authority_id: UUID,
-    db: AsyncSession = Depends(get_db)  # Changed to AsyncSession
+    db: AsyncSession = Depends(get_db)
 ):
     """Get specific authority details"""
     service = SchoolAuthorityService(db)
-    authority = await service.get(authority_id)  # Added await
+    authority = await service.get(authority_id)
     
     if not authority:
         raise HTTPException(status_code=404, detail="Authority not found")
@@ -165,13 +173,13 @@ async def get_authority(
 async def update_authority(
     authority_id: UUID,
     authority_data: AuthorityUpdate,
-    db: AsyncSession = Depends(get_db)  # Changed to AsyncSession
+    db: AsyncSession = Depends(get_db)
 ):
     """Update authority information"""
     service = SchoolAuthorityService(db)
     
     update_dict = authority_data.model_dump(exclude_unset=True)
-    authority = await service.update(authority_id, update_dict)  # Added await
+    authority = await service.update(authority_id, update_dict)
     
     if not authority:
         raise HTTPException(status_code=404, detail="Authority not found")
@@ -184,11 +192,11 @@ async def update_authority(
 @router.delete("/{authority_id}")
 async def delete_authority(
     authority_id: UUID,
-    db: AsyncSession = Depends(get_db)  # Changed to AsyncSession
+    db: AsyncSession = Depends(get_db)
 ):
     """Soft delete authority"""
     service = SchoolAuthorityService(db)
-    success = await service.soft_delete(authority_id)  # Added await
+    success = await service.soft_delete(authority_id)
     
     if not success:
         raise HTTPException(status_code=404, detail="Authority not found")
@@ -198,11 +206,11 @@ async def delete_authority(
 @router.get("/tenant/{tenant_id}")
 async def get_authorities_by_tenant(
     tenant_id: UUID,
-    db: AsyncSession = Depends(get_db)  # Changed to AsyncSession
+    db: AsyncSession = Depends(get_db)
 ):
     """Get all authorities for a specific school/tenant"""
     service = SchoolAuthorityService(db)
-    authorities = await service.get_by_tenant(tenant_id)  # Added await
+    authorities = await service.get_by_tenant(tenant_id)
     
     return [
         {
@@ -215,3 +223,111 @@ async def get_authorities_by_tenant(
         }
         for auth in authorities
     ]
+
+# NEW BULK OPERATION ENDPOINTS
+
+@router.post("/bulk/import", response_model=dict)
+async def bulk_import_authorities(
+    import_data: BulkAuthorityImport,
+    db: AsyncSession = Depends(get_db)
+):
+    """Bulk import school authorities from CSV/JSON data"""
+    service = SchoolAuthorityService(db)
+    
+    result = await service.bulk_import_authorities(
+        authorities_data=import_data.authorities,
+        tenant_id=import_data.tenant_id
+    )
+    
+    return {
+        "message": f"Bulk import completed. {result['successful_imports']} authorities imported successfully",
+        **result
+    }
+
+@router.post("/bulk/update-status", response_model=dict)
+async def bulk_update_status(
+    status_data: BulkStatusUpdate,
+    db: AsyncSession = Depends(get_db)
+):
+    """Bulk update authority status"""
+    service = SchoolAuthorityService(db)
+    
+    result = await service.bulk_update_status(
+        authority_ids=status_data.authority_ids,
+        new_status=status_data.new_status,
+        tenant_id=status_data.tenant_id
+    )
+    
+    return {
+        "message": f"Status update completed. {result['updated_authorities']} authorities updated to '{result['new_status']}'",
+        **result
+    }
+
+@router.post("/bulk/update-permissions", response_model=dict)
+async def bulk_update_permissions(
+    permission_data: BulkPermissionUpdate,
+    db: AsyncSession = Depends(get_db)
+):
+    """Bulk update authority permissions"""
+    service = SchoolAuthorityService(db)
+    
+    result = await service.bulk_update_permissions(
+        permission_updates=permission_data.permission_updates,
+        tenant_id=permission_data.tenant_id
+    )
+    
+    return {
+        "message": f"Permission update completed. {result['updated_authorities']} authorities updated",
+        **result
+    }
+
+@router.post("/bulk/update-positions", response_model=dict)
+async def bulk_update_positions(
+    position_data: BulkPositionUpdate,
+    db: AsyncSession = Depends(get_db)
+):
+    """Bulk update authority positions"""
+    service = SchoolAuthorityService(db)
+    
+    result = await service.bulk_update_positions(
+        position_updates=position_data.position_updates,
+        tenant_id=position_data.tenant_id
+    )
+    
+    return {
+        "message": f"Position update completed. {result['updated_authorities']} authorities updated",
+        **result
+    }
+
+@router.post("/bulk/delete", response_model=dict)
+async def bulk_delete_authorities(
+    delete_data: BulkDeleteRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """Bulk soft delete authorities"""
+    service = SchoolAuthorityService(db)
+    
+    result = await service.bulk_soft_delete(
+        authority_ids=delete_data.authority_ids,
+        tenant_id=delete_data.tenant_id
+    )
+    
+    return {
+        "message": f"Bulk delete completed. {result['deleted_authorities']} authorities deactivated",
+        **result
+    }
+
+@router.get("/statistics/{tenant_id}", response_model=dict)
+async def get_authority_statistics(
+    tenant_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """Get comprehensive authority statistics for a school"""
+    service = SchoolAuthorityService(db)
+    
+    stats = await service.get_authority_statistics(tenant_id)
+    
+    return {
+        "message": "Authority statistics retrieved successfully",
+        **stats
+    }
