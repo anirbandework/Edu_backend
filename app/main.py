@@ -18,6 +18,7 @@ from .routers.school_authority_management.student import router as student_route
 from .routers.school_authority_management.class_management import router as class_router
 from .routers.school_authority_management.enrollment import router as enrollment_router
 from .routers.school_authority_management.notifications import router as notifications_router
+from .routers.school_authority_management.attendance import router as attendance_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -143,7 +144,7 @@ app.include_router(student_router)
 app.include_router(class_router)
 app.include_router(enrollment_router)
 app.include_router(notifications_router)
-
+app.include_router(attendance_router)
 
 # Root endpoint
 @app.get("/")
