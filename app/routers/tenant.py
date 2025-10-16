@@ -3,38 +3,47 @@
 from datetime import datetime
 from typing import List
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 
 from ..core.database import get_db
+from ..core.cache import cache_manager
 from ..models.shared.tenant import Tenant
 from ..services.base_service import BaseService
 from ..schemas.tenant_schemas import Tenant as TenantSchema, TenantCreate, TenantUpdate
+from ..utils.pagination import PaginationParams, create_paginated_response
 
 router = APIRouter(prefix="/api/v1/tenants", tags=["Tenant Management"])
 
 @router.get("/", response_model=dict)
 async def get_tenants(
-    page: int = Query(1, ge=1),
-    size: int = Query(20, ge=1, le=100),
+    pagination: PaginationParams = Depends(),
     db: AsyncSession = Depends(get_db)
 ):
+    # Check cache first
+    cache_key = cache_manager.make_key("tenants_list", pagination.page, pagination.size)
+    cached_result = await cache_manager.get(cache_key)
+    if cached_result:
+        return cached_result
+    
     service = BaseService(Tenant, db)
-    result = await service.get_paginated(page=page, size=size)
+    result = await service.get_paginated(page=pagination.page, size=pagination.size)
     formatted_tenants = [
-        TenantSchema.model_validate(tenant)  # Changed from from_orm to model_validate
+        TenantSchema.model_validate(tenant).model_dump()
         for tenant in result["items"]
     ]
-    return {
-        "items": formatted_tenants,
-        "total": result["total"],
-        "page": result["page"],
-        "size": result["size"],
-        "has_next": result["has_next"],
-        "has_previous": result["has_previous"],
-        "total_pages": result["total_pages"]
-    }
+    
+    response = create_paginated_response(
+        items=formatted_tenants,
+        total=result["total"],
+        page=pagination.page,
+        size=pagination.size
+    )
+    
+    # Cache the result
+    await cache_manager.set(cache_key, response, ttl=180)  # 3 minutes
+    return response
 
 @router.post("/", response_model=TenantSchema)
 async def create_tenant(
@@ -57,6 +66,8 @@ async def create_tenant(
     
     try:
         tenant = await service.create(tenant_dict)
+        # Invalidate list cache
+        await cache_manager.delete_pattern("tenants_list:*")
         return tenant
     except IntegrityError as e:
         await db.rollback()
@@ -122,10 +133,20 @@ async def get_tenant(
     tenant_id: UUID,
     db: AsyncSession = Depends(get_db)
 ):
+    # Check cache first
+    cache_key = cache_manager.make_key("tenant", str(tenant_id))
+    cached_tenant = await cache_manager.get(cache_key)
+    if cached_tenant:
+        return TenantSchema.model_validate(cached_tenant)
+    
     service = BaseService(Tenant, db)
     tenant = await service.get(tenant_id)
     if not tenant:
         raise HTTPException(status_code=404, detail="School not found")
+    
+    # Cache the tenant
+    tenant_dict = TenantSchema.model_validate(tenant).model_dump()
+    await cache_manager.set(cache_key, tenant_dict, ttl=600)  # 10 minutes
     return tenant
 
 @router.put("/{tenant_id}", response_model=TenantSchema)
@@ -140,6 +161,11 @@ async def update_tenant(
         tenant = await service.update(tenant_id, tenant_data.model_dump(exclude_unset=True))
         if not tenant:
             raise HTTPException(status_code=404, detail="School not found")
+        
+        # Invalidate caches
+        await cache_manager.delete(cache_manager.make_key("tenant", str(tenant_id)))
+        await cache_manager.delete(cache_manager.make_key("tenant_stats", str(tenant_id)))
+        await cache_manager.delete_pattern("tenants_list:*")
         return tenant
     except IntegrityError as e:
         await db.rollback()
@@ -182,6 +208,11 @@ async def delete_tenant(
     success = await service.soft_delete(tenant_id)
     if not success:
         raise HTTPException(status_code=404, detail="School not found")
+    
+    # Invalidate caches
+    await cache_manager.delete(cache_manager.make_key("tenant", str(tenant_id)))
+    await cache_manager.delete(cache_manager.make_key("tenant_stats", str(tenant_id)))
+    await cache_manager.delete_pattern("tenants_list:*")
     return {"message": "School deactivated successfully"}
 
 @router.get("/{tenant_id}/stats")
@@ -189,11 +220,18 @@ async def get_tenant_stats(
     tenant_id: UUID,
     db: AsyncSession = Depends(get_db)
 ):
+    # Check cache first
+    cache_key = cache_manager.make_key("tenant_stats", str(tenant_id))
+    cached_stats = await cache_manager.get(cache_key)
+    if cached_stats:
+        return cached_stats
+    
     service = BaseService(Tenant, db)
     tenant = await service.get(tenant_id)
     if not tenant:
         raise HTTPException(status_code=404, detail="School not found")
-    return {
+    
+    stats = {
         "school_name": tenant.school_name,
         "total_students": tenant.total_students,
         "total_teachers": tenant.total_teachers,
@@ -203,6 +241,10 @@ async def get_tenant_stats(
         "capacity_utilization": round((tenant.current_enrollment / tenant.maximum_capacity * 100), 2) if tenant.maximum_capacity > 0 else 0,
         "student_teacher_ratio": round(tenant.total_students / tenant.total_teachers, 2) if tenant.total_teachers > 0 else 0
     }
+    
+    # Cache stats for 5 minutes
+    await cache_manager.set(cache_key, stats, ttl=300)
+    return stats
 
 @router.get("/summary/all")
 async def get_tenants_summary(

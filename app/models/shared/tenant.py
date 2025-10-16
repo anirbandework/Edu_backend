@@ -1,10 +1,11 @@
-# app/models/shared/tenant.py
-"""Tenant (School) model definition."""
-from sqlalchemy import Column, String, Integer, Numeric, ARRAY, Boolean, DateTime, UniqueConstraint
+#  services/api-gateway/app/models/shared/tenant.py
+from sqlalchemy import Column, String, DateTime, Boolean, Integer, Float, Text, ForeignKey, Table
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
-from ..base import Base
+from ..base import BaseModel
 
-class Tenant(Base):
+class Tenant(BaseModel):
     __tablename__ = "tenants"
     
     # Basic Information
@@ -37,24 +38,7 @@ class Tenant(Base):
     language_of_instruction = Column(String(20), default="English")
     
     # Relationships
-    # authorities = relationship("SchoolAuthority", back_populates="tenant", cascade="all, delete-orphan")
-    # teachers = relationship("Teacher", back_populates="tenant", cascade="all, delete-orphan")
-    # students = relationship("Student", back_populates="tenant", cascade="all, delete-orphan")
-    # classes = relationship("ClassModel", back_populates="tenant", cascade="all, delete-orphan")
-    
-    # Table-level unique constraints to prevent duplicate schools
-    __table_args__ = (
-        # Prevent duplicate email addresses
-        UniqueConstraint('email', name='uq_tenant_email'),
-        
-        # Prevent duplicate phone numbers
-        UniqueConstraint('phone', name='uq_tenant_phone'),
-        
-        # Prevent schools with same name at same address
-        UniqueConstraint('school_name', 'address', name='uq_tenant_school_name_address'),
-        
-        # Optional: Prevent duplicate principal names at same school
-        # UniqueConstraint('principal_name', 'school_name', name='uq_tenant_principal_school'),
-    )
-
- 
+    authorities = relationship("SchoolAuthority", back_populates="tenant", cascade="all, delete-orphan")
+    teachers = relationship("Teacher", back_populates="tenant", cascade="all, delete-orphan")
+    students = relationship("Student", back_populates="tenant", cascade="all, delete-orphan")
+    classes = relationship("ClassModel", back_populates="tenant", cascade="all, delete-orphan")

@@ -1,20 +1,19 @@
-from sqlalchemy.orm import as_declarative, declared_attr
-from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy import DateTime, func
+# services/api-gateway/app/models/base.py
+from datetime import datetime
+from uuid import uuid4
+from sqlalchemy import Column, String, DateTime, Boolean, Integer, Float, Text, ForeignKey, Table
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID
-import uuid
+from .base import Base
+from sqlalchemy.dialects.postgresql import UUID
 
-@as_declarative()
-class Base:
-    __abstract__ = True  # Prevents creating a table for the base class
+Base = declarative_base()
+
+class BaseModel(Base):
+    __abstract__ = True
     
-    id: Mapped[uuid.UUID]
-    
-    @declared_attr
-    def __tablename__(cls) -> str:
-        return cls.__name__.lower()
-    
-    # Use proper PostgreSQL UUID type with auto-generation
-    id = mapped_column(UUID(as_uuid=True), primary_key=True, index=True, default=uuid.uuid4)
-    created_at = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    is_deleted = Column(Boolean, default=False, nullable=False)
+

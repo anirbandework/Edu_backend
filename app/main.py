@@ -1,4 +1,3 @@
-# app/main.py
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
@@ -8,35 +7,40 @@ import time
 from .core.config import settings
 from .core.database import engine
 from .core.cache import cache_manager
-# Remove this problematic import
-# from .core.db_warmup import warm_up_connections
-from .routers.health import router as health_router
-from .routers.tenant import router as tenant_router
+
+# Import all routers
+from .routers import health, tenants, school_authorities
+from .routers.school_authority import (
+    teachers, students, classes, attendance, timetable, 
+    fee_management, grades, notifications, teacher_notifications, ai_prediction
+)
+from .routers.student_portal import notifications as student_notifications
+from .routers.doubt_chat import student_chat, teacher_chat
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Starting app")
+    logger.info("Starting EduAssist API Gateway")
     
-    # Initialize cache first
+    # Initialize cache
     await cache_manager.initialize()
     logger.info("Cache initialized")
     
-    # Remove the database warmup that's hanging
-    # await warm_up_connections()
-    # logger.info("Database connections warmed up")
-    
     yield
     
-    logger.info("Shutting down app")
+    logger.info("Shutting down EduAssist API Gateway")
     await cache_manager.close()
     await engine.dispose()
     logger.info("Shutdown complete")
 
-# Rest of your code remains the same...
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(
+    title="EduAssist API Gateway - AI-Powered School Management",
+    description="Complete Multi-tenant School Management System with AI Predictions and Caching",
+    version="4.0.0",
+    lifespan=lifespan
+)
 
 @app.middleware("http")
 async def add_process_time_header(request: Request, call_next):
@@ -56,12 +60,32 @@ app.add_middleware(
     max_age=3600,
 )
 
-app.include_router(health_router)
-app.include_router(tenant_router)
+# Include all routers
+app.include_router(health.router)
+app.include_router(tenants.router)
+app.include_router(school_authorities.router)
+app.include_router(teachers.router)
+app.include_router(students.router)
+app.include_router(classes.router)
+app.include_router(attendance.router)
+app.include_router(timetable.router)
+app.include_router(fee_management.router)
+app.include_router(grades.router)
+app.include_router(notifications.router)
+app.include_router(teacher_notifications.router)
+app.include_router(student_notifications.router)
+app.include_router(student_chat.router)
+app.include_router(teacher_chat.router)
+app.include_router(ai_prediction.router)
 
 @app.get("/")
 async def root():
-    return {"message": "EduAssist Backend API", "version": settings.app_version}
+    return {
+        "message": "EduAssist API Gateway v4.0 - AI-Powered with Redis Caching",
+        "version": "4.0.0",
+        "features": ["Multi-tenant", "AI Predictions", "Real-time Chat", "Redis Caching", "Async Operations"],
+        "status": "active"
+    }
 
 if __name__ == "__main__":
     import uvicorn
