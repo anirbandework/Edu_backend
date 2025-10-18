@@ -3,6 +3,8 @@ from sqlalchemy import Column, String, Integer, ForeignKey, Boolean
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from ..base import Base  # Changed from BaseModel to Base
+from sqlalchemy import UniqueConstraint
+
 
 class ClassModel(Base):  # Changed from BaseModel to Base
     __tablename__ = "classes"
@@ -20,6 +22,11 @@ class ClassModel(Base):  # Changed from BaseModel to Base
     classroom = Column(String(50))
     is_active = Column(Boolean, default=True)
     
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "class_name", "section", "academic_year", name="uq_class_identity"),
+    )
+
     # Relationships
     tenant = relationship("Tenant", back_populates="classes")
     enrollments = relationship("Enrollment", back_populates="class_ref")

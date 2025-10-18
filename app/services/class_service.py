@@ -195,10 +195,22 @@ class ClassService(BaseService[ClassModel]):
             if not classes_data:
                 raise HTTPException(status_code=400, detail="No class data provided")
             
+            # Check for existing classes to avoid duplicates
+            existing_check_sql = text("""
+                SELECT CONCAT(class_name, '-', section, '-', academic_year) as class_key
+                FROM classes
+                WHERE tenant_id = :tenant_id
+                AND is_deleted = false
+            """)
+            
+            result = await self.db.execute(existing_check_sql, {"tenant_id": tenant_id})
+            existing_classes = {row[0] for row in result.fetchall()}
+            
             # Validate and prepare bulk insert data
             now = datetime.utcnow()
             insert_data = []
             validation_errors = []
+            skipped_duplicates = 0
             
             for idx, class_data in enumerate(classes_data):
                 try:
@@ -210,6 +222,12 @@ class ClassService(BaseService[ClassModel]):
                             continue
                     
                     if validation_errors:
+                        continue
+                    
+                    # Check for duplicates
+                    class_key = f"{class_data['class_name']}-{class_data['section']}-{class_data['academic_year']}"
+                    if class_key in existing_classes:
+                        skipped_duplicates += 1
                         continue
                     
                     # Prepare class record
@@ -249,16 +267,18 @@ class ClassService(BaseService[ClassModel]):
                     :id, :tenant_id, :class_name, :grade_level, :section, :academic_year,
                     :maximum_students, :current_students, :classroom, :is_active,
                     :created_at, :updated_at, :is_deleted
-                ) ON CONFLICT (tenant_id, class_name, academic_year) DO NOTHING
+                )
             """)
             
-            result = await self.db.execute(bulk_insert_sql, insert_data)
-            await self.db.commit()
+            if insert_data:
+                result = await self.db.execute(bulk_insert_sql, insert_data)
+                await self.db.commit()
             
             return {
                 "total_records_processed": len(classes_data),
                 "successful_imports": len(insert_data),
                 "failed_imports": len(validation_errors),
+                "skipped_duplicates": skipped_duplicates,
                 "tenant_id": str(tenant_id),
                 "status": "success"
             }

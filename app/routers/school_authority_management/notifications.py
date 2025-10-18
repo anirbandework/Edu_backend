@@ -34,80 +34,35 @@ class NotificationCreate(BaseModel):
     academic_year: Optional[str] = None
     term: Optional[str] = None
 
-class NotificationUpdate(BaseModel):
-    title: Optional[str] = None
-    message: Optional[str] = None
-    short_message: Optional[str] = None
-    priority: Optional[NotificationPriority] = None
-    scheduled_at: Optional[datetime] = None
-    expires_at: Optional[datetime] = None
-    attachments: Optional[dict] = None
-    action_url: Optional[str] = None
-    action_text: Optional[str] = None
-    category: Optional[str] = None
-    tags: Optional[List[str]] = None
-
-# BULK OPERATION MODELS
-class BulkNotificationCreate(BaseModel):
-    tenant_id: UUID
-    notifications: List[dict]
-
-class BulkSendToRecipients(BaseModel):
-    notification_recipients: List[dict]  # [{"notification_id": UUID, "recipient_config": {...}}]
-
-class BulkStatusUpdate(BaseModel):
-    notification_ids: List[UUID]
-    new_status: str
-    tenant_id: UUID
-
-class BulkScheduleUpdate(BaseModel):
-    schedules: List[dict]  # [{"notification_id": UUID, "scheduled_at": datetime}]
-    tenant_id: UUID
-
-class BulkMarkAsRead(BaseModel):
-    notification_ids: List[UUID]
-    user_id: UUID
-    user_type: str
-
-class BulkDeleteRequest(BaseModel):
-    notification_ids: List[UUID]
-    tenant_id: UUID
-    hard_delete: bool = False
-
-class NotificationTemplate(BaseModel):
-    tenant_id: UUID
-    created_by: UUID
-    template_name: str
-    template_code: str
-    description: Optional[str] = None
-    subject_template: str
-    body_template: str
-    short_message_template: Optional[str] = None
-    notification_type: NotificationType
-    default_priority: NotificationPriority = NotificationPriority.NORMAL
-    supported_channels: Optional[List[str]] = ["in_app"]
-    template_variables: Optional[dict] = None
-    sample_data: Optional[dict] = None
-    category: Optional[str] = None
-    tags: Optional[List[str]] = None
-
 router = APIRouter(prefix="/api/v1/school_authority/notifications", tags=["School Authority - Notifications"])
 
-# EXISTING ENDPOINTS (updated for async)
 @router.post("/send", response_model=dict)
 async def send_notification(
     notification_data: NotificationCreate,
     sender_id: UUID,
-    background_tasks: BackgroundTasks,
+    sender_type: str = "school_authority",  # Can be "teacher", "school_authority"
+    background_tasks: BackgroundTasks = None,
     db: AsyncSession = Depends(get_db)
 ):
     """Send notification to recipients"""
     service = NotificationService(db)
     
     try:
+        print(f"DEBUG: Send notification endpoint called")
+        print(f"DEBUG: Sender ID: {sender_id}, Sender Type: {sender_type}")
+        print(f"DEBUG: Notification data: {notification_data.model_dump()}")
+        
+        # Convert sender_type string to enum
+        if sender_type.lower() == "teacher":
+            sender_type_enum = SenderType.TEACHER
+        elif sender_type.lower() == "school_authority":
+            sender_type_enum = SenderType.SCHOOL_AUTHORITY
+        else:
+            sender_type_enum = SenderType.SCHOOL_AUTHORITY  # Default
+        
         notification = await service.create_notification(
             sender_id=sender_id,
-            sender_type=SenderType.SCHOOL_AUTHORITY,
+            sender_type=sender_type_enum,
             notification_data=notification_data.model_dump()
         )
         
@@ -116,331 +71,20 @@ async def send_notification(
             "message": "Notification sent successfully",
             "title": notification.title,
             "total_recipients": notification.total_recipients,
+            "delivered_count": notification.delivered_count,
             "sent_at": notification.sent_at.isoformat() if notification.sent_at else None
         }
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-@router.get("/sent", response_model=dict)
-async def get_sent_notifications(
-    sender_id: UUID,
-    page: int = Query(1, ge=1),
-    size: int = Query(20, ge=1, le=100),
-    notification_type: Optional[NotificationType] = Query(None),
-    start_date: Optional[datetime] = Query(None),
-    end_date: Optional[datetime] = Query(None),
-    db: AsyncSession = Depends(get_db)
-):
-    """Get paginated notifications sent by school authority"""
-    service = NotificationService(db)
-    
-    try:
-        filters = {
-            "sender_id": sender_id,
-            "is_deleted": False
-        }
-        
-        if notification_type:
-            filters["notification_type"] = notification_type
-        
-        result = await service.get_paginated(page=page, size=size, **filters)
-        
-        formatted_notifications = [
-            {
-                "id": str(notification.id),
-                "title": notification.title,
-                "message": notification.message[:100] + "..." if len(notification.message) > 100 else notification.message,
-                "notification_type": notification.notification_type.value,
-                "priority": notification.priority.value,
-                "recipient_type": notification.recipient_type.value,
-                "total_recipients": notification.total_recipients,
-                "delivered_count": notification.delivered_count,
-                "read_count": notification.read_count,
-                "failed_count": notification.failed_count,
-                "status": notification.status.value,
-                "sent_at": notification.sent_at.isoformat() if notification.sent_at else None,
-                "created_at": notification.created_at.isoformat()
-            }
-            for notification in result["items"]
-        ]
-        
-        return {
-            "items": formatted_notifications,
-            "total": result["total"],
-            "page": result["page"],
-            "size": result["size"],
-            "has_next": result["has_next"],
-            "has_previous": result["has_previous"],
-            "total_pages": result["total_pages"]
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-# NEW BULK OPERATION ENDPOINTS
-
-@router.post("/bulk/create", response_model=dict)
-async def bulk_create_notifications(
-    import_data: BulkNotificationCreate,
-    db: AsyncSession = Depends(get_db)
-):
-    """Bulk create notifications from CSV/JSON data"""
-    service = NotificationService(db)
-    
-    result = await service.bulk_create_notifications(
-        notifications_data=import_data.notifications,
-        tenant_id=import_data.tenant_id
-    )
-    
-    return {
-        "message": f"Bulk creation completed. {result['successful_imports']} notifications created successfully",
-        **result
-    }
-
-@router.post("/bulk/send-to-recipients", response_model=dict)
-async def bulk_send_to_recipients(
-    send_data: BulkSendToRecipients,
-    db: AsyncSession = Depends(get_db)
-):
-    """Bulk send notifications to different recipient configurations"""
-    service = NotificationService(db)
-    
-    notification_ids = [UUID(item["notification_id"]) for item in send_data.notification_recipients]
-    recipient_configs = [item["recipient_config"] for item in send_data.notification_recipients]
-    
-    result = await service.bulk_send_to_recipients(
-        notification_ids=notification_ids,
-        recipient_configs=recipient_configs
-    )
-    
-    return {
-        "message": f"Bulk send completed. {result['processed_notifications']} notifications processed, {result['total_recipients_added']} recipients added",
-        **result
-    }
-
-@router.post("/bulk/update-status", response_model=dict)
-async def bulk_update_status(
-    status_data: BulkStatusUpdate,
-    db: AsyncSession = Depends(get_db)
-):
-    """Bulk update notification status"""
-    service = NotificationService(db)
-    
-    result = await service.bulk_update_notification_status(
-        notification_ids=status_data.notification_ids,
-        new_status=status_data.new_status,
-        tenant_id=status_data.tenant_id
-    )
-    
-    return {
-        "message": f"Status update completed. {result['updated_notifications']} notifications updated to '{result['new_status']}'",
-        **result
-    }
-
-@router.post("/bulk/schedule", response_model=dict)
-async def bulk_schedule_notifications(
-    schedule_data: BulkScheduleUpdate,
-    db: AsyncSession = Depends(get_db)
-):
-    """Bulk schedule notifications"""
-    service = NotificationService(db)
-    
-    result = await service.bulk_schedule_notifications(
-        schedule_data=schedule_data.schedules,
-        tenant_id=schedule_data.tenant_id
-    )
-    
-    return {
-        "message": f"Bulk scheduling completed. {result['scheduled_notifications']} notifications scheduled",
-        **result
-    }
-
-@router.post("/bulk/mark-as-read", response_model=dict)
-async def bulk_mark_as_read(
-    read_data: BulkMarkAsRead,
-    db: AsyncSession = Depends(get_db)
-):
-    """Bulk mark notifications as read for a user"""
-    service = NotificationService(db)
-    
-    result = await service.bulk_mark_as_read(
-        notification_ids=read_data.notification_ids,
-        user_id=read_data.user_id,
-        user_type=read_data.user_type
-    )
-    
-    return {
-        "message": f"Mark as read completed. {result['marked_as_read']} notifications marked as read",
-        **result
-    }
-
-@router.post("/bulk/delete", response_model=dict)
-async def bulk_delete_notifications(
-    delete_data: BulkDeleteRequest,
-    db: AsyncSession = Depends(get_db)
-):
-    """Bulk delete notifications"""
-    service = NotificationService(db)
-    
-    result = await service.bulk_delete_notifications(
-        notification_ids=delete_data.notification_ids,
-        tenant_id=delete_data.tenant_id,
-        hard_delete=delete_data.hard_delete
-    )
-    
-    return {
-        "message": f"Bulk delete completed. {result['deleted_notifications']} notifications {result['delete_type']} deleted",
-        **result
-    }
-
-@router.get("/analytics/comprehensive")
-async def get_comprehensive_statistics(
-    tenant_id: UUID,
-    start_date: Optional[datetime] = Query(None),
-    end_date: Optional[datetime] = Query(None),
-    db: AsyncSession = Depends(get_db)
-):
-    """Get comprehensive notification statistics and analytics"""
-    service = NotificationService(db)
-    
-    date_range = {}
-    if start_date:
-        date_range["start_date"] = start_date
-    if end_date:
-        date_range["end_date"] = end_date
-    
-    stats = await service.get_comprehensive_notification_statistics(
-        tenant_id=tenant_id,
-        date_range=date_range if date_range else None
-    )
-    
-    return {
-        "message": "Comprehensive notification statistics retrieved successfully",
-        **stats
-    }
-
-# EXISTING ENDPOINTS (updated)
-@router.get("/stats", response_model=dict)
-async def get_notification_stats(
-    sender_id: UUID,
-    start_date: Optional[datetime] = Query(None),
-    end_date: Optional[datetime] = Query(None),
-    db: AsyncSession = Depends(get_db)
-):
-    """Get notification statistics for school authority"""
-    service = NotificationService(db)
-    
-    try:
-        # Use the comprehensive statistics method
-        tenant_result = await service.db.execute(
-            text("SELECT tenant_id FROM notifications WHERE sender_id = :sender_id LIMIT 1"),
-            {"sender_id": sender_id}
-        )
-        tenant_row = tenant_result.fetchone()
-        
-        if not tenant_row:
-            return {"message": "No notifications found for this sender"}
-        
-        tenant_id = tenant_row[0]
-        date_range = {}
-        if start_date:
-            date_range["start_date"] = start_date
-        if end_date:
-            date_range["end_date"] = end_date
-            
-        stats = await service.get_comprehensive_notification_statistics(
-            tenant_id=tenant_id,
-            date_range=date_range if date_range else None
-        )
-        
-        return stats
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-@router.get("/{notification_id}", response_model=dict)
-async def get_notification_details(
-    notification_id: UUID,
-    db: AsyncSession = Depends(get_db)
-):
-    """Get detailed notification information"""
-    service = NotificationService(db)
-    
-    notification = await service.get(notification_id)
-    if not notification:
-        raise HTTPException(status_code=404, detail="Notification not found")
-    
-    # Get recipient summary using raw SQL for performance
-    recipient_summary_sql = text("""
-        SELECT 
-            COUNT(*) as total,
-            COUNT(CASE WHEN delivered_at IS NOT NULL THEN 1 END) as delivered,
-            COUNT(CASE WHEN read_at IS NOT NULL THEN 1 END) as read,
-            COUNT(CASE WHEN delivered_at IS NULL THEN 1 END) as pending
-        FROM notification_recipients
-        WHERE notification_id = :notification_id
-        AND is_deleted = false
-    """)
-    
-    result = await db.execute(recipient_summary_sql, {"notification_id": notification_id})
-    summary = result.fetchone()
-    
-    return {
-        "id": str(notification.id),
-        "title": notification.title,
-        "message": notification.message,
-        "short_message": notification.short_message,
-        "notification_type": notification.notification_type.value,
-        "priority": notification.priority.value,
-        "recipient_type": notification.recipient_type.value,
-        "recipient_config": notification.recipient_config,
-        "delivery_channels": notification.delivery_channels,
-        "total_recipients": notification.total_recipients,
-        "delivered_count": notification.delivered_count,
-        "read_count": notification.read_count,
-        "failed_count": notification.failed_count,
-        "clicked_count": notification.clicked_count,
-        "status": notification.status.value,
-        "sent_at": notification.sent_at.isoformat() if notification.sent_at else None,
-        "scheduled_at": notification.scheduled_at.isoformat() if notification.scheduled_at else None,
-        "expires_at": notification.expires_at.isoformat() if notification.expires_at else None,
-        "attachments": notification.attachments,
-        "action_url": notification.action_url,
-        "action_text": notification.action_text,
-        "category": notification.category,
-        "tags": notification.tags,
-        "recipients_summary": {
-            "total": summary[0] if summary else 0,
-            "delivered": summary[1] if summary else 0,
-            "read": summary[2] if summary else 0,
-            "pending": summary[3] if summary else 0
-        }
-    }
-
-@router.post("/templates", response_model=dict)
-async def create_notification_template(
-    template_data: NotificationTemplate,
-    db: AsyncSession = Depends(get_db)
-):
-    """Create notification template"""
-    service = NotificationService(db)
-    
-    try:
-        template = await service.create_template(template_data.model_dump())
-        return {
-            "id": str(template.id),
-            "message": "Template created successfully",
-            "template_name": template.template_name,
-            "template_code": template.template_code
-        }
-    except Exception as e:
+        print(f"DEBUG: Error in send notification: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.get("/for-user/{user_id}")
 async def get_notifications_for_user(
     user_id: UUID,
-    user_type: str,
-    tenant_id: UUID,
-    notification_type: Optional[NotificationType] = Query(None),
-    status: Optional[NotificationStatus] = Query(None),
+    user_type: str = Query(..., description="Type of user: student, teacher"),
+    tenant_id: UUID = Query(..., description="Tenant ID"),
+    notification_type: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
     unread_only: bool = Query(False),
     limit: int = Query(50, le=100),
     db: AsyncSession = Depends(get_db)
@@ -449,6 +93,8 @@ async def get_notifications_for_user(
     service = NotificationService(db)
     
     try:
+        print(f"DEBUG: Getting notifications for user {user_id}, type {user_type}, tenant {tenant_id}")
+        
         notifications = await service.get_notifications_for_user(
             user_id=user_id,
             user_type=user_type,
@@ -459,12 +105,10 @@ async def get_notifications_for_user(
             limit=limit
         )
         
-        return {
-            "notifications": notifications,
-            "total_count": len(notifications),
-            "unread_count": len([n for n in notifications if not n.get("read_at")])
-        }
+        return notifications  # Return the list directly as expected by Flutter
+        
     except Exception as e:
+        print(f"DEBUG: Error getting notifications: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.patch("/{notification_id}/mark-read")
@@ -477,11 +121,208 @@ async def mark_notification_as_read(
     service = NotificationService(db)
     
     try:
-        success = await service.mark_as_read(notification_id, user_id)
-        
-        if success:
-            return {"message": "Notification marked as read successfully"}
-        else:
-            return {"message": "Notification was already read or not found"}
+        result = await service.mark_notification_as_read(notification_id, user_id)
+        return result
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+# DEBUG ENDPOINTS
+@router.get("/debug/all-notifications")
+async def debug_all_notifications(
+    tenant_id: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """Debug: See all notifications in the database for a tenant"""
+    try:
+        notifications_sql = text("""
+            SELECT 
+                n.id,
+                n.title,
+                n.total_recipients,
+                n.delivered_count,
+                n.status,
+                n.created_at,
+                n.sender_id,
+                n.sender_type
+            FROM notifications n
+            WHERE n.tenant_id = :tenant_id
+            AND n.is_deleted = false
+            ORDER BY n.created_at DESC
+            LIMIT 20
+        """)
+        
+        result = await db.execute(notifications_sql, {"tenant_id": tenant_id})
+        notifications = result.fetchall()
+        
+        return {
+            "tenant_id": tenant_id,
+            "total_notifications": len(notifications),
+            "notifications": [
+                {
+                    "id": str(n[0]),
+                    "title": n[1],
+                    "total_recipients": n[2],
+                    "delivered_count": n[3],
+                    "status": n[4],
+                    "created_at": n[5].isoformat() if n[5] else None,
+                    "sender_id": str(n[6]),
+                    "sender_type": n[7]
+                } for n in notifications
+            ]
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Debug failed: {str(e)}")
+
+@router.get("/debug/all-recipients")
+async def debug_all_recipients(
+    tenant_id: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """Debug: See all notification recipients for a tenant"""
+    try:
+        recipients_sql = text("""
+            SELECT 
+                nr.id,
+                nr.notification_id,
+                nr.recipient_id,
+                nr.recipient_type,
+                nr.recipient_name,
+                nr.status,
+                nr.created_at,
+                n.title
+            FROM notification_recipients nr
+            JOIN notifications n ON nr.notification_id = n.id
+            WHERE nr.tenant_id = :tenant_id
+            AND nr.is_deleted = false
+            ORDER BY nr.created_at DESC
+            LIMIT 50
+        """)
+        
+        result = await db.execute(recipients_sql, {"tenant_id": tenant_id})
+        recipients = result.fetchall()
+        
+        return {
+            "tenant_id": tenant_id,
+            "total_recipients": len(recipients),
+            "recipients": [
+                {
+                    "id": str(r[0]),
+                    "notification_id": str(r[1]),
+                    "recipient_id": str(r[2]),
+                    "recipient_type": r[3],
+                    "recipient_name": r[4],
+                    "status": r[5],
+                    "created_at": r[6].isoformat() if r[6] else None,
+                    "notification_title": r[7]
+                } for r in recipients
+            ]
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Debug failed: {str(e)}")
+
+@router.get("/debug/student-check/{student_id}")
+async def debug_student_check(
+    student_id: str,
+    tenant_id: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """Debug: Check if student exists and their details"""
+    try:
+        student_sql = text("""
+            SELECT 
+                id,
+                first_name,
+                last_name,
+                status,
+                tenant_id,
+                is_deleted
+            FROM students
+            WHERE id = :student_id
+        """)
+        
+        result = await db.execute(student_sql, {"student_id": student_id})
+        student = result.fetchone()
+        
+        if not student:
+            return {
+                "student_found": False,
+                "message": "Student not found in database"
+            }
+        
+        return {
+            "student_found": True,
+            "student": {
+                "id": str(student[0]),
+                "name": f"{student[1]} {student[2]}",
+                "status": student[3],
+                "tenant_id": str(student[4]),
+                "is_deleted": student[5],
+                "tenant_matches": str(student[4]) == tenant_id
+            }
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Debug failed: {str(e)}")
+
+@router.post("/debug/create-test-notification")
+async def create_test_notification(
+    student_id: str,
+    tenant_id: str,
+    sender_id: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """Debug: Create a test notification directly for debugging"""
+    try:
+        print(f"DEBUG: Creating test notification for student {student_id}")
+        
+        service = NotificationService(db)
+        
+        # FIXED: Convert string UUIDs to UUID objects properly
+        try:
+            student_uuid = UUID(student_id)
+            tenant_uuid = UUID(tenant_id) 
+            sender_uuid = UUID(sender_id)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"Invalid UUID format: {str(e)}")
+        
+        # Create test notification data
+        test_notification_data = {
+            "tenant_id": tenant_uuid,  # FIXED: Use UUID object
+            "title": "🧪 Test Notification - Debug",
+            "message": "This is a test notification created for debugging purposes. If you can see this, the notification system is working correctly!",
+            "notification_type": NotificationType.ANNOUNCEMENT,
+            "priority": NotificationPriority.NORMAL, 
+            "recipient_type": RecipientType.INDIVIDUAL,
+            "recipient_config": {
+                "student_ids": [str(student_uuid)]  # FIXED: Keep as string in config
+            },
+            "delivery_channels": ["in_app"],
+            "category": "System Test"
+        }
+        
+        notification = await service.create_notification(
+            sender_id=sender_uuid,  # FIXED: Use UUID object
+            sender_type=SenderType.TEACHER,
+            notification_data=test_notification_data
+        )
+        
+        return {
+            "success": True,
+            "notification_id": str(notification.id),
+            "title": notification.title,
+            "total_recipients": notification.total_recipients,
+            "delivered_count": notification.delivered_count,
+            "status": notification.status.value,
+            "message": "Test notification created successfully"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"DEBUG: Error creating test notification: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to create test notification: {str(e)}")
+
+        
+    
