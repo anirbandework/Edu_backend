@@ -1,6 +1,6 @@
 # app/routers/tenant.py
 """Tenant (School) management endpoints with bulk operations."""
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -9,6 +9,8 @@ from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel
 
 from ..core.database import get_db
+from ..utils.pagination import Paginator, PaginationParams
+from ..utils.cache_decorators import cache_paginated_response
 from ..models.shared.tenant import Tenant
 from ..services.tenant_service import TenantService
 from ..schemas.tenant_schemas import Tenant as TenantSchema, TenantCreate, TenantUpdate
@@ -37,9 +39,9 @@ router = APIRouter(prefix="/api/v1/tenants", tags=["Tenant Management"])
 
 # EXISTING ENDPOINTS (with TenantService)
 @router.get("/", response_model=dict)
+@cache_paginated_response("tenants", expire=timedelta(minutes=5))
 async def get_tenants(
-    page: int = Query(1, ge=1),
-    size: int = Query(20, ge=1, le=100),
+    pagination: PaginationParams = Depends(Paginator.get_pagination_params),
     include_inactive: bool = Query(False, description="Include deactivated schools"),
     db: AsyncSession = Depends(get_db)
 ):
@@ -52,8 +54,8 @@ async def get_tenants(
         filters["is_active"] = True
     
     result = await service.get_paginated(
-        page=page, 
-        size=size, 
+        page=pagination.page, 
+        size=pagination.size, 
         **filters
     )
     
@@ -62,16 +64,11 @@ async def get_tenants(
         for tenant in result["items"]
     ]
     
-    return {
-        "items": formatted_tenants,
-        "total": result["total"],
-        "page": result["page"],
-        "size": result["size"],
-        "has_next": result["has_next"],
-        "has_previous": result["has_previous"],
-        "total_pages": result["total_pages"],
-        "showing": "all schools" if include_inactive else "active schools only"
-    }
+    # Update response with formatted items
+    result["items"] = formatted_tenants
+    result["showing"] = "all schools" if include_inactive else "active schools only"
+    
+    return result
 
 @router.post("/", response_model=TenantSchema)
 async def create_tenant(
