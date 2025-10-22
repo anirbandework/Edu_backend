@@ -9,7 +9,7 @@ from sqlalchemy import text  # ADDED MISSING IMPORT
 
 from .core.config import settings
 from .core.database import engine, background_engine, close_db_connections, get_pool_status
-from .core.cache import cache_manager
+from .core.cache import cache
 from .routers.health import router as health_router
 from .routers.tenant import router as tenant_router
 from .routers.school_authority import router as school_authority_router
@@ -33,12 +33,12 @@ async def lifespan(app: FastAPI):
     """Enhanced application lifespan with bulk operations support"""
     logger.info("Starting EduAssist Backend API")
     
-    # Initialize cache manager
+    # Initialize cache
     try:
-        await cache_manager.initialize()
-        logger.info("Cache manager initialized successfully")
+        await cache.connect()
+        logger.info("Redis cache connected successfully")
     except Exception as e:
-        logger.error(f"Failed to initialize cache: {e}")
+        logger.error(f"Failed to connect to Redis: {e}")
         # Don't fail startup if cache is unavailable
     
     # Test database connections for both engines
@@ -69,10 +69,10 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down EduAssist Backend API")
     
     try:
-        await cache_manager.close()
-        logger.info("Cache manager closed")
+        await cache.disconnect()
+        logger.info("Redis cache disconnected")
     except Exception as e:
-        logger.error(f"Error closing cache manager: {e}")
+        logger.error(f"Error disconnecting Redis: {e}")
     
     try:
         await close_db_connections()
@@ -185,7 +185,7 @@ async def system_status():
             "bulk_operations": True,  # Set to True when implemented
             "background_tasks": True,  # Set to True when implemented
             "connection_pooling": True,
-            "cache_manager": True
+            "redis_cache": True
         }
     }
 
