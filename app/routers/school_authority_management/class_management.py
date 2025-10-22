@@ -5,6 +5,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
 from ...core.database import get_db
+from datetime import timedelta
+from ...utils.pagination import Paginator, PaginationParams
+from ...utils.cache_decorators import cache_paginated_response
 from ...models.tenant_specific.class_model import ClassModel
 from ...services.class_service import ClassService
 
