@@ -1,11 +1,14 @@
 # app/routers/school_authority/student.py
 from typing import List, Optional
 from uuid import UUID
+from datetime import timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, EmailStr
 from datetime import datetime
 from ...core.database import get_db
+from ...utils.pagination import Paginator, PaginationParams
+from ...utils.cache_decorators import cache_paginated_response
 from ...models.tenant_specific.student import Student
 from ...services.student_service import StudentService
 
@@ -88,9 +91,9 @@ router = APIRouter(prefix="/api/v1/school_authority/students", tags=["School Aut
 
 # EXISTING ENDPOINTS (unchanged)
 @router.get("/", response_model=dict)
+@cache_paginated_response("students", expire=timedelta(minutes=8))
 async def get_students(
-    page: int = Query(1, ge=1),
-    size: int = Query(20, ge=1, le=100),
+    pagination: PaginationParams = Depends(Paginator.get_pagination_params),
     tenant_id: Optional[UUID] = Query(None),
     grade_level: Optional[int] = Query(None),
     section: Optional[str] = Query(None),
@@ -100,12 +103,19 @@ async def get_students(
     service = StudentService(db)
     
     try:
-        result = await service.get_students_paginated(
-            page=page,
-            size=size,
-            tenant_id=tenant_id,
-            grade_level=grade_level,
-            section=section
+        # Build filters
+        filters = {}
+        if tenant_id:
+            filters["tenant_id"] = tenant_id
+        if grade_level:
+            filters["grade_level"] = grade_level
+        if section:
+            filters["section"] = section
+            
+        result = await service.get_paginated(
+            page=pagination.page,
+            size=pagination.size,
+            **filters
         )
         
         # Format student data
@@ -132,15 +142,9 @@ async def get_students(
             for student in result["items"]
         ]
         
-        return {
-            "items": formatted_students,
-            "total": result["total"],
-            "page": result["page"],
-            "size": result["size"],
-            "has_next": result["has_next"],
-            "has_previous": result["has_previous"],
-            "total_pages": result["total_pages"]
-        }
+        # Update response with formatted items
+        result["items"] = formatted_students
+        return result
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
