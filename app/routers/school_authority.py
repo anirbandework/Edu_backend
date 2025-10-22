@@ -1,11 +1,14 @@
 # app/routers/school_authority.py (base router, not the subdirectory)
 from typing import List, Optional
 from uuid import UUID
+from datetime import timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, EmailStr
 from datetime import datetime
 from ..core.database import get_db
+from ..utils.pagination import Paginator, PaginationParams
+from ..utils.cache_decorators import cache_paginated_response
 from ..models.tenant_specific.school_authority import SchoolAuthority
 from ..services.school_authority_service import SchoolAuthorityService
 
@@ -68,9 +71,9 @@ router = APIRouter(prefix="/api/v1/authorities", tags=["School Authority"])
 
 # EXISTING ENDPOINTS (unchanged, but with proper async)
 @router.get("/", response_model=dict)
+@cache_paginated_response("authorities", expire=timedelta(minutes=10))
 async def get_authorities(
-    page: int = Query(1, ge=1),
-    size: int = Query(20, ge=1, le=100),
+    pagination: PaginationParams = Depends(Paginator.get_pagination_params),
     tenant_id: Optional[UUID] = Query(None),
     db: AsyncSession = Depends(get_db)
 ):
@@ -82,7 +85,11 @@ async def get_authorities(
         filters["tenant_id"] = tenant_id
     
     try:
-        result = await service.get_paginated(page=page, size=size, **filters)
+        result = await service.get_paginated(
+            page=pagination.page, 
+            size=pagination.size, 
+            **filters
+        )
         
         formatted_authorities = [
             {
@@ -103,15 +110,10 @@ async def get_authorities(
             for auth in result["items"]
         ]
         
-        return {
-            "items": formatted_authorities,
-            "total": result["total"],
-            "page": result["page"],
-            "size": result["size"],
-            "has_next": result["has_next"],
-            "has_previous": result["has_previous"],
-            "total_pages": result["total_pages"]
-        }
+        # Update response with formatted items
+        result["items"] = formatted_authorities
+        return result
+        
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
