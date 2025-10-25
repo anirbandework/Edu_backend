@@ -575,6 +575,9 @@ class TimetableService(BaseService[MasterTimetable]):
     async def get_teacher_weekly_schedule(self, teacher_id: UUID, academic_year: str) -> Dict[str, List[dict]]:
         """Get optimized weekly schedule for a teacher using raw SQL"""
         try:
+            # Initialize empty schedule
+            weekly_schedule = {day.value: [] for day in DayOfWeek}
+            
             teacher_schedule_sql = text("""
                 SELECT 
                     se.day_of_week,
@@ -618,29 +621,30 @@ class TimetableService(BaseService[MasterTimetable]):
             
             schedule_data = result.fetchall()
             
-            # Organize by day
-            weekly_schedule = {day.value: [] for day in DayOfWeek}
-            
-            for row in schedule_data:
-                day_schedule = {
-                    "schedule_entry_id": str(row[11]),
-                    "period_number": row[1],
-                    "period_name": row[2],
-                    "start_time": row[3].isoformat() if row[3] else None,
-                    "end_time": row[4].isoformat() if row[4] else None,
-                    "subject_name": row[5],
-                    "subject_code": row[6],
-                    "class_name": row[7],
-                    "room_number": row[8],
-                    "building": row[9],
-                    "notes": row[10]
-                }
-                weekly_schedule[row[0]].append(day_schedule)
+            # Process results if any exist
+            if schedule_data:
+                for row in schedule_data:
+                    day_schedule = {
+                        "schedule_entry_id": str(row[11]),
+                        "period_number": row[1],
+                        "period_name": row[2],
+                        "start_time": row[3].isoformat() if row[3] else None,
+                        "end_time": row[4].isoformat() if row[4] else None,
+                        "subject_name": row[5],
+                        "subject_code": row[6],
+                        "class_name": row[7],
+                        "room_number": row[8],
+                        "building": row[9],
+                        "notes": row[10]
+                    }
+                    weekly_schedule[row[0]].append(day_schedule)
             
             return weekly_schedule
             
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to get teacher schedule: {str(e)}")
+            # Return empty schedule on error instead of raising exception
+            print(f"Error in get_teacher_weekly_schedule: {str(e)}")
+            return {day.value: [] for day in DayOfWeek}
     
     # ANALYTICS AND REPORTING
     

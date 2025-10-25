@@ -6,7 +6,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
 from ...core.database import get_db
 from ...models.tenant_specific.class_model import ClassModel
+from ...models.tenant_specific.enrollment import Enrollment
+from ...models.tenant_specific.student import Student
 from ...services.class_service import ClassService
+from ...services.enrollment_service import EnrollmentService
 
 # Existing Pydantic Models
 class ClassCreate(BaseModel):
@@ -59,6 +62,10 @@ class AcademicYearRollover(BaseModel):
 class BulkDeleteRequest(BaseModel):
     tenant_id: UUID
     class_ids: List[UUID]
+
+class AddStudentsToClass(BaseModel):
+    student_ids: List[UUID]
+    academic_year: str
 
 router = APIRouter(prefix="/api/v1/school_authority/classes", tags=["School Authority - Class Management"])
 
@@ -442,6 +449,103 @@ async def update_student_count(
         }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/{class_id}/students", response_model=dict)
+async def get_class_students(
+    class_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """Get all students enrolled in a specific class"""
+    from sqlalchemy import select
+    
+    # Verify class exists
+    class_stmt = select(ClassModel).where(ClassModel.id == class_id, ClassModel.is_deleted == False)
+    class_result = await db.execute(class_stmt)
+    class_obj = class_result.scalar_one_or_none()
+    
+    if not class_obj:
+        raise HTTPException(status_code=404, detail="Class not found")
+    
+    # Get students enrolled in this class
+    students_stmt = (
+        select(Student, Enrollment)
+        .join(Enrollment, Student.id == Enrollment.student_id)
+        .where(
+            Enrollment.class_id == class_id,
+            Enrollment.status == "active",
+            Student.is_deleted == False
+        )
+        .order_by(Student.first_name, Student.last_name)
+    )
+    
+    result = await db.execute(students_stmt)
+    student_enrollments = result.all()
+    
+    students_data = [
+        {
+            "id": str(student.id),
+            "student_id": student.student_id,
+            "first_name": student.first_name,
+            "last_name": student.last_name,
+            "full_name": f"{student.first_name} {student.last_name}",
+            "email": student.email,
+            "phone": student.phone,
+            "admission_number": student.admission_number,
+            "roll_number": student.roll_number,
+            "grade_level": student.grade_level,
+            "section": student.section,
+            "status": student.status,
+            "enrollment_date": enrollment.enrollment_date.isoformat() if enrollment.enrollment_date else None,
+            "academic_year": enrollment.academic_year
+        }
+        for student, enrollment in student_enrollments
+    ]
+    
+    return {
+        "class_info": {
+            "id": str(class_obj.id),
+            "class_name": class_obj.class_name,
+            "grade_level": class_obj.grade_level,
+            "section": class_obj.section,
+            "academic_year": class_obj.academic_year,
+            "classroom": class_obj.classroom
+        },
+        "students": students_data,
+        "total_students": len(students_data),
+        "class_capacity": class_obj.maximum_students,
+        "available_spots": class_obj.maximum_students - len(students_data)
+    }
+
+@router.post("/{class_id}/students", response_model=dict)
+async def add_students_to_class(
+    class_id: UUID,
+    request: AddStudentsToClass,
+    db: AsyncSession = Depends(get_db)
+):
+    """Add multiple students to a class"""
+    enrollment_service = EnrollmentService(db)
+    
+    try:
+        result = await enrollment_service.bulk_enroll_students(
+            class_id=class_id,
+            student_ids=request.student_ids,
+            academic_year=request.academic_year
+        )
+        
+        return {
+            "message": f"Successfully added {result['successful_enrollments']} students to class",
+            "class_id": str(class_id),
+            "successful_enrollments": result["successful_enrollments"],
+            "failed_enrollments": result["failed_enrollments"],
+            "successful_students": result["successful"],
+            "failed_students": result["failed"],
+            "class_capacity_after": result["class_capacity_after"]
+        }
+        
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

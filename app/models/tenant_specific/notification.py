@@ -75,17 +75,46 @@ class Notification(Base):
     # Foreign Keys
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
     sender_id = Column(UUID(as_uuid=True), nullable=False, index=True)
-    sender_type = Column(Enum(SenderType), nullable=False)
+    sender_type = Column(
+        Enum(
+            SenderType,
+            native_enum=False,
+            values_callable=lambda enum_cls: [e.value for e in enum_cls]
+        ),
+        nullable=False
+    )
     
     # Notification Content
     title = Column(String(200), nullable=False)
     message = Column(Text, nullable=False)
     short_message = Column(String(500))  # For SMS/push notifications
-    notification_type = Column(Enum(NotificationType), nullable=False)
-    priority = Column(Enum(NotificationPriority), default=NotificationPriority.NORMAL)
+    notification_type = Column(
+        Enum(
+            NotificationType,
+            native_enum=False,
+            values_callable=lambda enum_cls: [e.value for e in enum_cls]
+        ),
+        nullable=False
+    )
+    priority = Column(
+        Enum(
+            NotificationPriority,
+            native_enum=False,
+            values_callable=lambda enum_cls: [e.value for e in enum_cls]
+        ),
+        default=NotificationPriority.NORMAL.value,
+        nullable=False
+    )
     
     # Recipient Configuration
-    recipient_type = Column(Enum(RecipientType), nullable=False)
+    recipient_type = Column(
+        Enum(
+            RecipientType,
+            native_enum=False,
+            values_callable=lambda enum_cls: [e.value for e in enum_cls]
+        ),
+        nullable=False
+    )
     recipient_config = Column(JSON)  # Configuration for recipients
     
     # Delivery Configuration  
@@ -107,7 +136,15 @@ class Notification(Base):
     clicked_count = Column(Integer, default=0)
     
     # Status and Timing
-    status = Column(Enum(NotificationStatus), default=NotificationStatus.DRAFT)
+    status = Column(
+        Enum(
+            NotificationStatus,
+            native_enum=False,
+            values_callable=lambda enum_cls: [e.value for e in enum_cls]
+        ),
+        default=NotificationStatus.DRAFT.value,
+        nullable=False
+    )
     sent_at = Column(DateTime)
     delivery_started_at = Column(DateTime)
     delivery_completed_at = Column(DateTime)
@@ -152,7 +189,15 @@ class NotificationRecipient(Base):
     recipient_phone = Column(String(20))
     
     # Delivery Status
-    status = Column(Enum(NotificationStatus), default=NotificationStatus.SENT)
+    status = Column(
+        Enum(
+            NotificationStatus,
+            native_enum=False,
+            values_callable=lambda enum_cls: [e.value for e in enum_cls]
+        ),
+        default=NotificationStatus.SENT.value,
+        nullable=False
+    )
     delivered_at = Column(DateTime)
     read_at = Column(DateTime)
     clicked_at = Column(DateTime)
@@ -187,7 +232,14 @@ class NotificationTemplate(Base):
     # Foreign Keys
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
     created_by = Column(UUID(as_uuid=True), nullable=False)
-    created_by_type = Column(Enum(SenderType), nullable=False)
+    created_by_type = Column(
+        Enum(
+            SenderType,
+            native_enum=False,
+            values_callable=lambda enum_cls: [e.value for e in enum_cls]
+        ),
+        nullable=False
+    )
     
     # Template Information
     template_name = Column(String(100), nullable=False)
@@ -201,8 +253,23 @@ class NotificationTemplate(Base):
     short_message_template = Column(String(500))  # For SMS/push
     
     # Template Configuration
-    notification_type = Column(Enum(NotificationType), nullable=False)
-    default_priority = Column(Enum(NotificationPriority), default=NotificationPriority.NORMAL)
+    notification_type = Column(
+        Enum(
+            NotificationType,
+            native_enum=False,
+            values_callable=lambda enum_cls: [e.value for e in enum_cls]
+        ),
+        nullable=False
+    )
+    default_priority = Column(
+        Enum(
+            NotificationPriority,
+            native_enum=False,
+            values_callable=lambda enum_cls: [e.value for e in enum_cls]
+        ),
+        default=NotificationPriority.NORMAL.value,
+        nullable=False
+    )
     supported_channels = Column(JSON)
     
     # Variables and Placeholders
@@ -232,7 +299,14 @@ class NotificationDeliveryLog(Base):
     recipient_id = Column(UUID(as_uuid=True), nullable=False, index=True)
     
     # Delivery Information
-    channel = Column(Enum(DeliveryChannel), nullable=False)
+    channel = Column(
+        Enum(
+            DeliveryChannel,
+            native_enum=False,
+            values_callable=lambda enum_cls: [e.value for e in enum_cls]
+        ),
+        nullable=False
+    )
     delivery_attempt = Column(Integer, default=1)
     
     # Status and Timing
@@ -270,7 +344,14 @@ class NotificationPreference(Base):
     user_type = Column(String(20), nullable=False)
     
     # Preference Configuration
-    notification_type = Column(Enum(NotificationType), nullable=False)
+    notification_type = Column(
+        Enum(
+            NotificationType,
+            native_enum=False,
+            values_callable=lambda enum_cls: [e.value for e in enum_cls]
+        ),
+        nullable=False
+    )
     
     # Channel Preferences
     email_enabled = Column(Boolean, default=True)
@@ -293,7 +374,15 @@ class NotificationPreference(Base):
     digest_day = Column(String(10), default="sunday")
     
     # Priority Filtering
-    min_priority = Column(Enum(NotificationPriority), default=NotificationPriority.LOW)
+    min_priority = Column(
+        Enum(
+            NotificationPriority,
+            native_enum=False,
+            values_callable=lambda enum_cls: [e.value for e in enum_cls]
+        ),
+        default=NotificationPriority.LOW.value,
+        nullable=False
+    )
     
     # Content Filtering
     keywords_filter = Column(JSON)  # Keywords to filter
@@ -310,7 +399,14 @@ class NotificationGroup(Base):
     # Foreign Keys
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
     created_by = Column(UUID(as_uuid=True), nullable=False)
-    created_by_type = Column(Enum(SenderType), nullable=False)
+    created_by_type = Column(
+        Enum(
+            SenderType,
+            native_enum=False,
+            values_callable=lambda enum_cls: [e.value for e in enum_cls]
+        ),
+        nullable=False
+    )
     
     # Group Information
     group_name = Column(String(100), nullable=False)
@@ -387,7 +483,14 @@ class NotificationBatch(Base):
     # Foreign Keys
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
     created_by = Column(UUID(as_uuid=True), nullable=False)
-    created_by_type = Column(Enum(SenderType), nullable=False)
+    created_by_type = Column(
+        Enum(
+            SenderType,
+            native_enum=False,
+            values_callable=lambda enum_cls: [e.value for e in enum_cls]
+        ),
+        nullable=False
+    )
     
     # Batch Information
     batch_name = Column(String(100), nullable=False)

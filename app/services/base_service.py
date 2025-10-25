@@ -17,12 +17,17 @@ class BaseService(Generic[T]):
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def get_multi(self, skip: int = 0, limit: int = 100, include_deleted: bool = False):
+    async def get_multi(self, skip: int = 0, limit: int = 100, include_deleted: bool = False, **filters):
         stmt = select(self.model).offset(skip).limit(limit)
         
         # Add soft delete filter if model has is_deleted field
         if hasattr(self.model, 'is_deleted') and not include_deleted:
             stmt = stmt.where(self.model.is_deleted == False)
+        
+        # Add additional filters
+        for key, value in filters.items():
+            if hasattr(self.model, key) and value is not None:
+                stmt = stmt.where(getattr(self.model, key) == value)
         
         result = await self.db.execute(stmt)
         return result.scalars().all()

@@ -265,48 +265,21 @@ class ScheduleEntry(Base):
     
     # Schedule Information
     day_of_week = Column(Enum(DayOfWeek), nullable=False, index=True)
-    
-    # Subject Information (cached for performance)
     subject_name = Column(String(100), nullable=False)
     subject_code = Column(String(20))
     
     # Location Information
     room_number = Column(String(20))
     building = Column(String(50))
-    floor = Column(String(10))
-    location_notes = Column(Text)
-    room_capacity = Column(Integer)
-    
-    # Teacher Information (cached for performance)
     teacher_name = Column(String(200))
-    
-    # Special Configurations
-    is_recurring = Column(Boolean, default=True)
-    effective_date = Column(Date)
-    expiry_date = Column(Date)
-    
-    # Substitution Information
-    is_substitution = Column(Boolean, default=False)
-    original_teacher_id = Column(UUID(as_uuid=True))
-    original_teacher_name = Column(String(200))
-    substitution_reason = Column(String(200))
-    substitution_date = Column(Date)
-    
-    # Additional Information
-    notes = Column(Text)
-    attendance_required = Column(Boolean, default=True)
-    
-    # Batch Information (for bulk operations)
-    batch_id = Column(UUID(as_uuid=True))
-    import_source = Column(String(50))  # "manual", "bulk_import", "auto_generated"
     
     # Status
     is_active = Column(Boolean, default=True)
+    is_substitution = Column(Boolean, default=False)
     
-    # Unique constraint for regular schedules
+    # Unique constraint
     __table_args__ = (
-        UniqueConstraint('class_timetable_id', 'day_of_week', 'period_id', 
-                        name='unique_class_day_period'),
+        UniqueConstraint('class_timetable_id', 'day_of_week', 'period_id', name='unique_class_day_period'),
     )
     
     # Relationships
@@ -320,100 +293,37 @@ class ScheduleEntry(Base):
 class TimetableConflict(Base):
     __tablename__ = "timetable_conflicts"
     
-    # Foreign Keys
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
-    
-    # Conflict Information
-    conflict_type = Column(String(50), nullable=False)  # "teacher_double_booking", "room_conflict", etc.
+    conflict_type = Column(String(50), nullable=False)
     severity = Column(Enum(ConflictSeverity), default=ConflictSeverity.MEDIUM, nullable=False)
     title = Column(String(200), nullable=False)
     description = Column(Text, nullable=False)
-    
-    # Related Entities
-    schedule_entry_1_id = Column(UUID(as_uuid=True), ForeignKey("schedule_entries.id"))
-    schedule_entry_2_id = Column(UUID(as_uuid=True), ForeignKey("schedule_entries.id"))
-    teacher_id = Column(UUID(as_uuid=True))
-    class_id = Column(UUID(as_uuid=True))
-    room_number = Column(String(20))
-    
-    # Conflict Details
-    day_of_week = Column(Enum(DayOfWeek))
-    period_number = Column(Integer)
-    conflict_data = Column(JSON)  # Additional conflict details
-    
-    # Resolution
     is_resolved = Column(Boolean, default=False)
-    resolution_notes = Column(Text)
-    resolution_action = Column(String(100))  # "reassign_teacher", "change_room", etc.
-    resolved_by = Column(UUID(as_uuid=True))
-    resolved_date = Column(DateTime)
     
-    # Auto-detection
-    detected_by = Column(String(50), default="system")  # "system", "manual"
-    auto_resolve = Column(Boolean, default=False)
-    
-    # Relationships
     tenant = relationship("Tenant")
-    schedule_entry_1 = relationship("ScheduleEntry", foreign_keys=[schedule_entry_1_id])
-    schedule_entry_2 = relationship("ScheduleEntry", foreign_keys=[schedule_entry_2_id])
 
 
 class TimetableTemplate(Base):
     __tablename__ = "timetable_templates"
     
-    # Foreign Keys
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
-    created_by = Column(UUID(as_uuid=True), nullable=False)
-    
-    # Template Information
     template_name = Column(String(100), nullable=False)
-    description = Column(Text)
-    template_type = Column(String(50))  # "class", "teacher", "grade_level"
-    
-    # Template Configuration
-    grade_levels = Column(JSON)  # Applicable grade levels
-    template_data = Column(JSON)  # Template structure
-    
-    # Usage Statistics
-    usage_count = Column(Integer, default=0)
-    last_used = Column(DateTime)
-    
-    # Status
+    template_type = Column(String(50))
+    template_data = Column(JSON)
     is_active = Column(Boolean, default=True)
-    is_public = Column(Boolean, default=False)  # Available to other schools
     
-    # Relationships
     tenant = relationship("Tenant")
 
 
 class TimetableAuditLog(Base):
     __tablename__ = "timetable_audit_logs"
     
-    # Foreign Keys
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
-    
-    # Audit Information
-    action_type = Column(String(50), nullable=False)  # "create", "update", "delete", "publish"
-    entity_type = Column(String(50), nullable=False)  # "master_timetable", "schedule_entry", etc.
+    action_type = Column(String(50), nullable=False)
+    entity_type = Column(String(50), nullable=False)
     entity_id = Column(UUID(as_uuid=True), nullable=False)
-    
-    # User Information
     performed_by = Column(UUID(as_uuid=True), nullable=False)
-    performed_by_name = Column(String(200))
-    user_role = Column(String(50))  # "school_authority", "teacher", etc.
-    
-    # Change Details
-    old_values = Column(JSON)
-    new_values = Column(JSON)
     change_description = Column(Text)
-    
-    # Context
-    ip_address = Column(String(45))
-    user_agent = Column(String(500))
-    session_id = Column(String(100))
-    
-    # Timing
     action_timestamp = Column(DateTime, default=datetime.utcnow, nullable=False)
     
-    # Relationships
     tenant = relationship("Tenant")

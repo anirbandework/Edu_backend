@@ -7,6 +7,8 @@ from pydantic import BaseModel, EmailStr
 from datetime import datetime
 from ...core.database import get_db
 from ...models.tenant_specific.student import Student
+from ...models.tenant_specific.enrollment import Enrollment
+from ...models.tenant_specific.class_model import ClassModel
 from ...services.student_service import StudentService
 
 # Pydantic Models
@@ -266,6 +268,74 @@ async def get_students_by_tenant(
         }
         for student in students
     ]
+
+@router.get("/{student_id}/classes", response_model=dict)
+async def get_student_classes(
+    student_id: UUID,
+    academic_year: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get all classes that a student belongs to"""
+    from sqlalchemy import select
+    
+    # Verify student exists
+    student_stmt = select(Student).where(Student.id == student_id, Student.is_deleted == False)
+    student_result = await db.execute(student_stmt)
+    student = student_result.scalar_one_or_none()
+    
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+    
+    # Get classes the student is enrolled in
+    classes_stmt = (
+        select(ClassModel, Enrollment)
+        .join(Enrollment, ClassModel.id == Enrollment.class_id)
+        .where(
+            Enrollment.student_id == student_id,
+            Enrollment.status == "active",
+            ClassModel.is_deleted == False,
+            Enrollment.is_deleted == False
+        )
+    )
+    
+    if academic_year:
+        classes_stmt = classes_stmt.where(Enrollment.academic_year == academic_year)
+    
+    classes_stmt = classes_stmt.order_by(ClassModel.grade_level, ClassModel.section)
+    
+    result = await db.execute(classes_stmt)
+    class_enrollments = result.all()
+    
+    classes_data = [
+        {
+            "id": str(class_obj.id),
+            "class_name": class_obj.class_name,
+            "grade_level": class_obj.grade_level,
+            "section": class_obj.section,
+            "academic_year": class_obj.academic_year,
+            "classroom": class_obj.classroom,
+            "maximum_students": class_obj.maximum_students,
+            "current_students": class_obj.current_students,
+            "enrollment_date": enrollment.enrollment_date.isoformat() if enrollment.enrollment_date else None,
+            "enrollment_status": enrollment.status
+        }
+        for class_obj, enrollment in class_enrollments
+    ]
+    
+    return {
+        "student_info": {
+            "id": str(student.id),
+            "student_id": student.student_id,
+            "first_name": student.first_name,
+            "last_name": student.last_name,
+            "full_name": f"{student.first_name} {student.last_name}",
+            "grade_level": student.grade_level,
+            "section": student.section,
+            "academic_year": student.academic_year
+        },
+        "classes": classes_data,
+        "total_classes": len(classes_data)
+    }
 
 @router.get("/grade/{grade_level}")
 async def get_students_by_grade(

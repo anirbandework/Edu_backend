@@ -36,29 +36,78 @@ class NotificationCreate(BaseModel):
 
 router = APIRouter(prefix="/api/v1/school_authority/notifications", tags=["School Authority - Notifications"])
 
+async def _validate_and_get_sender_type(db: AsyncSession, sender_id: UUID) -> SenderType:
+    """Validate sender exists and return their actual type from database"""
+    
+    print(f"DEBUG: Validating sender_id: {sender_id}")
+    
+    # Check if sender is a student FIRST (should not be allowed to send)
+    student_sql = text("""
+        SELECT id FROM students 
+        WHERE id = :sender_id AND is_deleted = false
+    """)
+    result = await db.execute(student_sql, {"sender_id": str(sender_id)})
+    student_result = result.fetchone()
+    print(f"DEBUG: Student check: {student_result}")
+    if student_result:
+        print(f"DEBUG: Student found - raising 403 error")
+        raise HTTPException(
+            status_code=403, 
+            detail="Students are not allowed to send notifications"
+        )
+    
+    # Check if sender is a school authority
+    school_authority_sql = text("""
+        SELECT id FROM school_authorities 
+        WHERE id = :sender_id AND is_deleted = false
+    """)
+    result = await db.execute(school_authority_sql, {"sender_id": str(sender_id)})
+    sa_result = result.fetchone()
+    print(f"DEBUG: School authority check: {sa_result}")
+    if sa_result:
+        return SenderType.SCHOOL_AUTHORITY
+    
+    # Check if sender is a teacher
+    teacher_sql = text("""
+        SELECT id FROM teachers 
+        WHERE id = :sender_id AND is_deleted = false
+    """)
+    result = await db.execute(teacher_sql, {"sender_id": str(sender_id)})
+    teacher_result = result.fetchone()
+    print(f"DEBUG: Teacher check: {teacher_result}")
+    if teacher_result:
+        return SenderType.TEACHER
+    
+    # Sender not found in any valid table
+    print(f"DEBUG: Sender {sender_id} not found in any table")
+    raise HTTPException(
+        status_code=404, 
+        detail="Sender not found or invalid sender type"
+    )
+
 @router.post("/send", response_model=dict)
 async def send_notification(
     notification_data: NotificationCreate,
     sender_id: UUID,
-    sender_type: str = "school_authority",  # Can be "teacher", "school_authority"
     background_tasks: BackgroundTasks = None,
     db: AsyncSession = Depends(get_db)
 ):
     """Send notification to recipients"""
+    print("DEBUG: Send notification endpoint called")
+    print(f"DEBUG: Sender ID: {sender_id}")
+    print(f"DEBUG: Notification data: {notification_data.model_dump()}")
+    
     service = NotificationService(db)
     
     try:
-        print(f"DEBUG: Send notification endpoint called")
-        print(f"DEBUG: Sender ID: {sender_id}, Sender Type: {sender_type}")
-        print(f"DEBUG: Notification data: {notification_data.model_dump()}")
+        # Validate sender and determine actual sender type from database
+        sender_type_enum = await _validate_and_get_sender_type(db, sender_id)
+        print(f"DEBUG: Validated sender type: {sender_type_enum}")
         
-        # Convert sender_type string to enum
-        if sender_type.lower() == "teacher":
-            sender_type_enum = SenderType.TEACHER
-        elif sender_type.lower() == "school_authority":
-            sender_type_enum = SenderType.SCHOOL_AUTHORITY
-        else:
-            sender_type_enum = SenderType.SCHOOL_AUTHORITY  # Default
+        # Create notification
+        print(f"DEBUG: Creating notification for sender {sender_id}")
+        print(f"DEBUG: Sender type: {sender_type_enum}")
+        print(f"DEBUG: Notification data: {notification_data.model_dump()}")
         
         notification = await service.create_notification(
             sender_id=sender_id,
@@ -74,9 +123,14 @@ async def send_notification(
             "delivered_count": notification.delivered_count,
             "sent_at": notification.sent_at.isoformat() if notification.sent_at else None
         }
+    except HTTPException as he:
+        print(f"DEBUG: HTTPException caught: status={he.status_code}, detail={he.detail}")
+        raise  # Re-raise HTTPException with original status code
     except Exception as e:
-        print(f"DEBUG: Error in send notification: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
+        print(f"DEBUG: General exception in send notification: {str(e)}")
+        import traceback
+        print(f"DEBUG: Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/for-user/{user_id}")
 async def get_notifications_for_user(
@@ -217,6 +271,41 @@ async def debug_all_recipients(
                     "notification_title": r[7]
                 } for r in recipients
             ]
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Debug failed: {str(e)}")
+
+@router.get("/debug/sender-check/{sender_id}")
+async def debug_sender_check(
+    sender_id: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """Debug: Check if sender exists in any table"""
+    try:
+        results = {}
+        
+        # Check students
+        student_sql = text("SELECT id, first_name, last_name FROM students WHERE id = :sender_id AND is_deleted = false")
+        result = await db.execute(student_sql, {"sender_id": sender_id})
+        student = result.fetchone()
+        results["student"] = {"found": bool(student), "data": f"{student[1]} {student[2]}" if student else None}
+        
+        # Check teachers
+        teacher_sql = text("SELECT id, teacher_id FROM teachers WHERE id = :sender_id AND is_deleted = false")
+        result = await db.execute(teacher_sql, {"sender_id": sender_id})
+        teacher = result.fetchone()
+        results["teacher"] = {"found": bool(teacher), "data": teacher[1] if teacher else None}
+        
+        # Check school_authorities
+        sa_sql = text("SELECT id, first_name, last_name FROM school_authorities WHERE id = :sender_id AND is_deleted = false")
+        result = await db.execute(sa_sql, {"sender_id": sender_id})
+        sa = result.fetchone()
+        results["school_authority"] = {"found": bool(sa), "data": f"{sa[1]} {sa[2]}" if sa else None}
+        
+        return {
+            "sender_id": sender_id,
+            "results": results
         }
         
     except Exception as e:

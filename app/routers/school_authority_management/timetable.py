@@ -110,6 +110,10 @@ async def get_master_timetables(
         
         timetables = await service.get_multi(**filters)
         
+        # Ensure we always return a list, even if empty
+        if not timetables:
+            return []
+        
         return [
             {
                 "id": str(tt.id),
@@ -122,7 +126,7 @@ async def get_master_timetables(
                 "school_start_time": tt.school_start_time.isoformat() if tt.school_start_time else None,
                 "school_end_time": tt.school_end_time.isoformat() if tt.school_end_time else None,
                 "total_periods_per_day": tt.total_periods_per_day,
-                "status": tt.status.value,
+                "status": tt.status.value if tt.status else "draft",
                 "is_default": tt.is_default,
                 "working_days": tt.working_days,
                 "total_classes": tt.total_classes,
@@ -133,7 +137,9 @@ async def get_master_timetables(
             for tt in timetables
         ]
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        # Log the error for debugging
+        print(f"Error in get_master_timetables: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 # CLASS TIMETABLE ENDPOINTS
 
@@ -236,7 +242,8 @@ async def get_teacher_schedule(
             "access_type": "read_only" if requester_type == "teacher" else "full_access"
         }
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        print(f"Error in get_teacher_schedule: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 # BULK OPERATIONS (School Authority Only)
 

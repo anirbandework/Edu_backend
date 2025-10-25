@@ -1,10 +1,16 @@
 # app/main.py
-from fastapi import FastAPI, Request
+from dotenv import load_dotenv
+load_dotenv()
+
+
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 import logging
 import time
 from sqlalchemy import text  # ADDED MISSING IMPORT
+
 
 
 from .core.config import settings
@@ -91,6 +97,18 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Global exception handler to preserve HTTP status codes
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """Ensure HTTPException status codes are preserved"""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail}
+    )
+
+
+
+
 
 @app.middleware("http")
 async def add_process_time_header(request: Request, call_next):
@@ -147,6 +165,8 @@ app.include_router(enrollment_router)
 app.include_router(notifications_router)
 app.include_router(attendance_router)
 app.include_router(timetable_router)
+
+
 
 # Root endpoint
 @app.get("/")
