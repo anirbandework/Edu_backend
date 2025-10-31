@@ -1,7 +1,7 @@
 # app/models/shared/tenant.py
 """Tenant (School) model definition."""
-from sqlalchemy import Column, String, Integer, Numeric, ARRAY, Boolean, DateTime, UniqueConstraint
-from sqlalchemy.orm import relationship
+from sqlalchemy import Column, String, Integer, Numeric, ARRAY, Boolean, DateTime, UniqueConstraint, Index, CheckConstraint
+from sqlalchemy.orm import relationship, validates
 from ..base import Base
 
 class Tenant(Base):
@@ -11,50 +11,114 @@ class Tenant(Base):
     school_code = Column(String(10), unique=True, nullable=False, index=True)
     school_name = Column(String(200), nullable=False, index=True)
     address = Column(String(500), nullable=False)
-    phone = Column(String(20), nullable=False)
-    email = Column(String(100), nullable=False)
+    phone = Column(String(15), nullable=False)  # Removed redundant index
+    email = Column(String(254), nullable=False)  # Standard email length, removed redundant index
+
+    @validates('phone')
+    def validate_phone(self, key, value):
+        import re
+        if not value or not re.match(r'^\+?\d{7,15}$', value):
+            raise ValueError("Invalid phone number format")
+        return value
+
+    @validates('email')
+    def validate_email(self, key, value):
+        import re
+        # Remove mailto: prefix if present
+        if value and value.startswith('mailto:'):
+            value = value[7:]
+        if not value or not re.match(r'^[^@]+@[^@]+\.[^@]+$', value):
+            raise ValueError("Invalid email address format")
+        return value
+    
+
     principal_name = Column(String(100), nullable=False)
-    is_active = Column(Boolean, default=True, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)  # Removed redundant index
     
     # Financial Information
     annual_tuition = Column(Numeric(10, 2), nullable=False)
     registration_fee = Column(Numeric(8, 2), nullable=False)
+    charges_applied = Column(Boolean, default=False, nullable=False)
+    charges_amount = Column(Numeric(10, 2), nullable=True)
     
-    # Statistics
-    total_students = Column(Integer, default=0)
-    total_teachers = Column(Integer, default=0)
-    total_staff = Column(Integer, default=0)
+    # Statistics with validation
     maximum_capacity = Column(Integer, nullable=False)
-    current_enrollment = Column(Integer, default=0)
     
     # Academic Information
     school_type = Column(String(20), default="K-12")
     grade_levels = Column(ARRAY(String), nullable=False)
-    academic_year_start = Column(DateTime)
-    academic_year_end = Column(DateTime)
     established_year = Column(Integer)
     accreditation = Column(String(50))
     language_of_instruction = Column(String(20), default="English")
     
-    # Relationships
-    authorities = relationship("SchoolAuthority", back_populates="tenant", cascade="all, delete-orphan")
-    teachers = relationship("Teacher", back_populates="tenant", cascade="all, delete-orphan")
-    students = relationship("Student", back_populates="tenant", cascade="all, delete-orphan")
-    classes = relationship("ClassModel", back_populates="tenant", cascade="all, delete-orphan")
+    # Soft delete (inherited from Base but explicitly defined for clarity)
+    is_deleted = Column(Boolean, default=False, nullable=False)
+
+    @validates('is_deleted')
+    def validate_is_deleted(self, key, value):
+        if value is None:
+            return False
+        return bool(value)
     
-    # Table-level unique constraints to prevent duplicate schools
+    # Relationships - optimized for 100k+ scale
+    authorities = relationship("SchoolAuthority", back_populates="tenant", cascade="all, delete-orphan", lazy="dynamic")
+    teachers = relationship("Teacher", back_populates="tenant", cascade="all, delete-orphan", lazy="dynamic")
+    students = relationship("Student", back_populates="tenant", cascade="all, delete-orphan", lazy="dynamic")
+    classes = relationship("ClassModel", back_populates="tenant", cascade="all, delete-orphan", lazy="dynamic")
+    
+    # Validation methods
+    @validates('annual_tuition', 'registration_fee', 'charges_amount')
+    def validate_financial(self, key, value):
+        if value is None:
+            return value
+        try:
+            if float(value) < 0:
+                raise ValueError(f"{key} must be non-negative")
+        except (ValueError, TypeError, OverflowError):
+            raise ValueError(f"{key} must be a valid number")
+        return value
+    
+    @validates('maximum_capacity')
+    def validate_counts(self, key, value):
+        if value is None:
+            return value
+        
+        # Convert to integer
+        try:
+            int_value = int(value)
+        except (ValueError, TypeError, OverflowError):
+            raise ValueError(f"{key} must be a valid integer")
+        
+        # Check positive for capacity
+        if int_value <= 0:
+            raise ValueError("maximum_capacity must be greater than 0")
+        
+        return int_value
+    
+    # Database constraints and indexes
     __table_args__ = (
-        # Prevent duplicate email addresses
+        # Unique constraints
         UniqueConstraint('email', name='uq_tenant_email'),
-        
-        # Prevent duplicate phone numbers
         UniqueConstraint('phone', name='uq_tenant_phone'),
-        
-        # Prevent schools with same name at same address
         UniqueConstraint('school_name', 'address', name='uq_tenant_school_name_address'),
+        UniqueConstraint('school_code', name='uq_tenant_school_code'),
         
-        # Optional: Prevent duplicate principal names at same school
-        # UniqueConstraint('principal_name', 'school_name', name='uq_tenant_principal_school'),
+        # Financial constraints
+        CheckConstraint('annual_tuition >= 0', name='ck_tuition_positive'),
+        CheckConstraint('registration_fee >= 0', name='ck_fee_positive'),
+        CheckConstraint('charges_amount >= 0', name='ck_charges_positive'),
+        
+        # Capacity constraints
+        CheckConstraint('maximum_capacity > 0', name='ck_capacity_positive'),
+        
+        # Performance indexes for 100k+ scale
+        Index('idx_active_code', 'is_active', 'school_code'),
+        Index('idx_active_name', 'is_active', 'school_name'),
+        Index('idx_email_active', 'email', 'is_active'),
+        Index('idx_phone_active', 'phone', 'is_active'),
+        Index('idx_created_at', 'created_at'),
+        Index('idx_school_type_active', 'school_type', 'is_active'),
+        Index('idx_deleted_active', 'is_deleted', 'is_active'),
     )
 
  

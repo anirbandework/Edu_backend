@@ -140,7 +140,7 @@ class ClassTimetable(Base):
     
     # Foreign Keys
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
-    class_id = Column(UUID(as_uuid=True), nullable=False, index=True)  # References classes table
+    class_id = Column(UUID(as_uuid=True), ForeignKey("classes.id"), nullable=False, index=True)
     master_timetable_id = Column(UUID(as_uuid=True), ForeignKey("master_timetables.id"), nullable=False, index=True)
     
     # Timetable Information
@@ -171,6 +171,7 @@ class ClassTimetable(Base):
     
     # Relationships
     tenant = relationship("Tenant")
+    class_ref = relationship("ClassModel", back_populates="class_timetables")
     master_timetable = relationship("MasterTimetable", back_populates="class_timetables")
     schedule_entries = relationship("ScheduleEntry", back_populates="class_timetable", cascade="all, delete-orphan")
 
@@ -180,7 +181,7 @@ class TeacherTimetable(Base):
     
     # Foreign Keys
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
-    teacher_id = Column(UUID(as_uuid=True), nullable=False, index=True)  # References teachers table
+    teacher_id = Column(UUID(as_uuid=True), ForeignKey("teachers.id"), nullable=False, index=True)
     master_timetable_id = Column(UUID(as_uuid=True), ForeignKey("master_timetables.id"), nullable=False, index=True)
     
     # Timetable Information
@@ -216,6 +217,7 @@ class TeacherTimetable(Base):
     
     # Relationships
     tenant = relationship("Tenant")
+    teacher_ref = relationship("Teacher", back_populates="teacher_timetables")
     master_timetable = relationship("MasterTimetable", back_populates="teacher_timetables")
     schedule_entries = relationship("ScheduleEntry", back_populates="teacher_timetable")
 

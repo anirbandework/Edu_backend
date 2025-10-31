@@ -30,4 +30,6 @@ class ClassModel(Base):  # Changed from BaseModel to Base
     # Relationships
     tenant = relationship("Tenant", back_populates="classes")
     enrollments = relationship("Enrollment", back_populates="class_ref")
-    # teaching_assignments = relationship("TeacherAssignment", back_populates="class_ref")
+    teacher_assignments = relationship("TeacherAssignment", back_populates="class_ref")
+    class_timetables = relationship("ClassTimetable", back_populates="class_ref")
+    attendances = relationship("Attendance", back_populates="class_ref")

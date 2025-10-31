@@ -25,7 +25,8 @@ from .routers.school_authority_management.class_management import router as clas
 from .routers.school_authority_management.enrollment import router as enrollment_router
 from .routers.school_authority_management.notifications import router as notifications_router
 from .routers.school_authority_management.attendance import router as attendance_router
-from .routers.school_authority_management.timetable import router as timetable_router  
+from .routers.school_authority_management.timetable import router as timetable_router
+from .routers.teacher_assignment import router as teacher_assignment_router  
 
 logging.basicConfig(
     level=logging.INFO,
@@ -94,7 +95,8 @@ app = FastAPI(
     title="EduAssist Backend API",
     description="Educational Management Platform API with Bulk Operations Support",
     version=settings.app_version,
-    lifespan=lifespan
+    lifespan=lifespan,
+    servers=[{"url": "http://localhost:8000"}]
 )
 
 # Global exception handler to preserve HTTP status codes
@@ -104,6 +106,16 @@ async def http_exception_handler(request: Request, exc: HTTPException):
     return JSONResponse(
         status_code=exc.status_code,
         content={"detail": exc.detail}
+    )
+
+# Global exception handler for all other exceptions
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Handle all unhandled exceptions"""
+    logger.error(f"Unhandled exception on {request.url.path}: {exc}")
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"Internal server error: {str(exc)}"}
     )
 
 
@@ -165,6 +177,7 @@ app.include_router(enrollment_router)
 app.include_router(notifications_router)
 app.include_router(attendance_router)
 app.include_router(timetable_router)
+app.include_router(teacher_assignment_router)
 
 
 

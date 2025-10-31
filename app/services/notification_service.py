@@ -60,23 +60,20 @@ class NotificationService(BaseService[Notification]):
         recipients = await self._generate_recipients(notification)
         notification.total_recipients = len(recipients)
         
-        # Bulk insert recipients for better performance
-        if recipients:
-            recipient_objects = [
-                NotificationRecipient(
-                    notification_id=notification.id,
-                    tenant_id=recipient_data["tenant_id"],
-                    recipient_id=recipient_data["recipient_id"],
-                    recipient_type=recipient_data["recipient_type"],
-                    recipient_name=recipient_data["recipient_name"],
-                    recipient_email=recipient_data.get("recipient_email"),
-                    recipient_phone=recipient_data.get("recipient_phone"),
-                    status=NotificationStatus.DELIVERED.value,
-                    delivered_at=datetime.utcnow(),
-                )
-                for recipient_data in recipients
-            ]
-            self.db.add_all(recipient_objects)
+        # Add recipients to database
+        for recipient_data in recipients:
+            recipient = NotificationRecipient(
+                notification_id=notification.id,
+                tenant_id=recipient_data["tenant_id"],
+                recipient_id=recipient_data["recipient_id"],
+                recipient_type=recipient_data["recipient_type"],
+                recipient_name=recipient_data["recipient_name"],
+                recipient_email=recipient_data.get("recipient_email"),
+                recipient_phone=recipient_data.get("recipient_phone"),
+                status=NotificationStatus.DELIVERED.value,
+                delivered_at=datetime.utcnow(),
+            )
+            self.db.add(recipient)
         
         # Update notification status and counts
         notification.status = NotificationStatus.SENT.value
@@ -425,40 +422,91 @@ class NotificationService(BaseService[Notification]):
                     })
             
             elif recipient_type == RecipientType.CLASS.value:
-                # Students in specific classes
+                # Class notifications - supports single class, multiple classes, and grade-based
                 class_ids = recipient_config.get("class_ids", [])
+                grades = recipient_config.get("grades", [])
+                
+                # Handle single class_id format
+                if "class_id" in recipient_config:
+                    class_ids = [recipient_config["class_id"]]
                 
                 print(f"DEBUG: Class - Class IDs: {class_ids}")
+                print(f"DEBUG: Class - Grades: {grades}")
                 
+                # Handle specific class IDs
                 if class_ids:
-                    class_students_sql = text("""
-                        SELECT s.id, s.first_name, s.last_name, s.email, s.phone
-                        FROM students s
-                        JOIN enrollments e ON s.id = e.student_id
-                        WHERE e.class_id = ANY(:class_ids)
-                        AND s.tenant_id = :tenant_id
-                        AND s.is_deleted = false
-                        AND e.status = 'active'
-                        AND e.is_deleted = false
-                    """)
+                    for class_id in class_ids:
+                        print(f"DEBUG: Looking for students in class {class_id}")
+                        
+                        class_students_sql = text("""
+                            SELECT s.id, s.first_name, s.last_name, s.email, s.phone
+                            FROM students s
+                            WHERE s.class_id = :class_id
+                            AND s.tenant_id = :tenant_id
+                            AND s.is_deleted = false
+                            AND s.status = 'active'
+                        """)
+                        
+                        result = await self.db.execute(
+                            class_students_sql,
+                            {"class_id": str(class_id), "tenant_id": str(notification.tenant_id)}
+                        )
+                        rows = result.fetchall()
+                        
+                        print(f"DEBUG: Found {len(rows)} students in class {class_id}")
+                        for row in rows:
+                            recipients.append({
+                                "tenant_id": str(notification.tenant_id),
+                                "recipient_id": str(row[0]),
+                                "recipient_type": "student",
+                                "recipient_name": f"{row[1]} {row[2]}",
+                                "recipient_email": row[3],
+                                "recipient_phone": row[4]
+                            })
+                
+                # Handle grade-based notifications
+                elif grades:
+                    print(f"DEBUG: Looking for students in grades: {grades}")
                     
-                    result = await self.db.execute(
-                        class_students_sql,
-                        {"class_ids": [str(cid) for cid in class_ids], "tenant_id": str(notification.tenant_id)}
-                    )
+                    # Grade to class mapping based on current assignments
+                    grade_class_mapping = {
+                        9: ["29c39aa8-3179-4e36-baac-2422622efd39"],  # Emma's class
+                        10: ["15a9829e-1ce6-431a-801c-0a83959f8497", "50e03c36-a9ab-488e-926a-0e430f774572"],  # Olivia & Liam
+                        11: ["53b22301-a655-46ec-98fe-6234469bb0bf"],  # Noah's class
+                        12: ["2e4f2183-0d7c-4497-a796-5d725d148557"]   # Sophia's class
+                    }
                     
-                    class_rows = result.fetchall()
-                    print(f"DEBUG: Found {len(class_rows)} students in classes")
+                    target_class_ids = []
+                    for grade in grades:
+                        if grade in grade_class_mapping:
+                            target_class_ids.extend(grade_class_mapping[grade])
                     
-                    for row in class_rows:
-                        recipients.append({
-                            "tenant_id": str(notification.tenant_id),
-                            "recipient_id": str(row[0]),
-                            "recipient_type": "student",
-                            "recipient_name": f"{row[1]} {row[2]}",
-                            "recipient_email": row[3],
-                            "recipient_phone": row[4]
-                        })
+                    if target_class_ids:
+                        grade_students_sql = text("""
+                            SELECT s.id, s.first_name, s.last_name, s.email, s.phone
+                            FROM students s
+                            WHERE s.class_id = ANY(:class_ids)
+                            AND s.tenant_id = :tenant_id
+                            AND s.is_deleted = false
+                            AND s.status = 'active'
+                        """)
+                        
+                        result = await self.db.execute(
+                            grade_students_sql,
+                            {"class_ids": target_class_ids, "tenant_id": str(notification.tenant_id)}
+                        )
+                        rows = result.fetchall()
+                        
+                        print(f"DEBUG: Found {len(rows)} students in grades {grades}")
+                        for row in rows:
+                            recipients.append({
+                                "tenant_id": str(notification.tenant_id),
+                                "recipient_id": str(row[0]),
+                                "recipient_type": "student",
+                                "recipient_name": f"{row[1]} {row[2]}",
+                                "recipient_email": row[3],
+                                "recipient_phone": row[4]
+                            })
             
             elif recipient_type == RecipientType.GRADE.value:
                 # Students in specific grades
@@ -467,34 +515,41 @@ class NotificationService(BaseService[Notification]):
                 print(f"DEBUG: Grade - Grade levels: {grade_levels}")
                 
                 if grade_levels:
-                    grade_students_sql = text("""
-                        SELECT id, first_name, last_name, email, phone
-                        FROM students
-                        WHERE grade_level = ANY(:grade_levels)
-                        AND tenant_id = :tenant_id
-                        AND status = 'active'
-                        AND is_deleted = false
-                    """)
-                    
-                    result = await self.db.execute(
-                        grade_students_sql,
-                        {"grade_levels": grade_levels, "tenant_id": str(notification.tenant_id)}
-                    )
-                    
-                    grade_rows = result.fetchall()
-                    print(f"DEBUG: Found {len(grade_rows)} students in grades")
-                    
-                    for row in grade_rows:
-                        recipients.append({
-                            "tenant_id": str(notification.tenant_id),
-                            "recipient_id": str(row[0]),
-                            "recipient_type": "student",
-                            "recipient_name": f"{row[1]} {row[2]}",
-                            "recipient_email": row[3],
-                            "recipient_phone": row[4]
-                        })
+                    try:
+                        grade_students_sql = text("""
+                            SELECT id, first_name, last_name, email, phone
+                            FROM students
+                            WHERE grade_level = ANY(:grade_levels)
+                            AND tenant_id = :tenant_id
+                            AND status = 'active'
+                            AND is_deleted = false
+                        """)
+                        
+                        result = await self.db.execute(
+                            grade_students_sql,
+                            {"grade_levels": grade_levels, "tenant_id": str(notification.tenant_id)}
+                        )
+                        
+                        grade_rows = result.fetchall()
+                        print(f"DEBUG: Found {len(grade_rows)} students in grades")
+                        
+                        for row in grade_rows:
+                            recipients.append({
+                                "tenant_id": str(notification.tenant_id),
+                                "recipient_id": str(row[0]),
+                                "recipient_type": "student",
+                                "recipient_name": f"{row[1]} {row[2]}",
+                                "recipient_email": row[3],
+                                "recipient_phone": row[4]
+                            })
+                    except Exception as e:
+                        print(f"DEBUG: Grade query failed: {str(e)}")
             
             print(f"DEBUG: Generated {len(recipients)} total recipients")
+            if len(recipients) == 0:
+                print(f"DEBUG: WARNING - No recipients found for {recipient_type} with config {recipient_config}")
+                if recipient_type == RecipientType.CLASS.value:
+                    print(f"DEBUG: HINT - No students found for class. Check if class_id exists and has enrolled students")
             for i, recipient in enumerate(recipients):
                 print(f"DEBUG: Recipient {i+1}: {recipient['recipient_name']} ({recipient['recipient_id']})")
             
@@ -502,6 +557,10 @@ class NotificationService(BaseService[Notification]):
             
         except Exception as e:
             print(f"DEBUG: Error in _generate_recipients: {str(e)}")
+            import traceback
+            print(f"DEBUG: Traceback: {traceback.format_exc()}")
+            # Log error details for debugging
+            # Log error for debugging
             raise e
     
     # Keep all existing validation and utility methods

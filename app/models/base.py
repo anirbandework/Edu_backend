@@ -1,6 +1,6 @@
 from sqlalchemy.orm import as_declarative, declared_attr
 from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy import DateTime, Boolean, func
+from sqlalchemy import DateTime, Boolean, func, Index
 from sqlalchemy.dialects.postgresql import UUID
 import uuid
 
@@ -17,8 +17,8 @@ class Base:
     
     # Use proper PostgreSQL UUID type with auto-generation
     id = mapped_column(UUID(as_uuid=True), primary_key=True, index=True, default=uuid.uuid4)
-    created_at = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
     updated_at = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
-    # Soft delete functionality for EduAssist
-    is_deleted = mapped_column(Boolean, default=False, nullable=False)
+    # Soft delete functionality for EduAssist - indexed for performance
+    is_deleted = mapped_column(Boolean, default=False, nullable=False, index=True)

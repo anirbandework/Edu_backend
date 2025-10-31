@@ -51,6 +51,8 @@ from app.models.tenant_specific.timetable import (
     TimetableAuditLog
 )
 
+from app.models.tenant_specific.teacher_assignment import TeacherAssignment
+
 
 config = context.config
 

@@ -29,3 +29,5 @@ class Teacher(Base):
     
     # Relationships
     tenant = relationship("Tenant", back_populates="teachers")
+    assignments = relationship("TeacherAssignment", back_populates="teacher")
+    teacher_timetables = relationship("TeacherTimetable", back_populates="teacher_ref")
