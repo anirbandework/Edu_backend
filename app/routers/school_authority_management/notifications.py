@@ -22,7 +22,7 @@ class NotificationCreate(BaseModel):
     notification_type: NotificationType
     priority: NotificationPriority = NotificationPriority.NORMAL
     recipient_type: RecipientType
-    recipient_config: Optional[dict] = None
+    recipient_config: dict  # REQUIRED: Specify who receives the notification
     delivery_channels: Optional[List[str]] = ["in_app"]
     scheduled_at: Optional[datetime] = None
     expires_at: Optional[datetime] = None
@@ -33,6 +33,22 @@ class NotificationCreate(BaseModel):
     tags: Optional[List[str]] = None
     academic_year: Optional[str] = None
     term: Optional[str] = None
+    
+    class Config:
+        schema_extra = {
+            "example": {
+                "tenant_id": "3fd85f64-5717-4562-b3fc-2c963f66afa6",
+                "title": "Important Announcement",
+                "message": "This is an important message for students",
+                "notification_type": "announcement",
+                "priority": "normal",
+                "recipient_type": "individual",
+                "recipient_config": {
+                    "student_ids": ["student-uuid-1", "student-uuid-2"]
+                },
+                "delivery_channels": ["in_app"]
+            }
+        }
 
 router = APIRouter(prefix="/api/v1/school_authority/notifications", tags=["School Authority - Notifications"])
 
@@ -92,7 +108,16 @@ async def send_notification(
     background_tasks: BackgroundTasks = None,
     db: AsyncSession = Depends(get_db)
 ):
-    """Send notification to recipients"""
+    """Send notification to recipients
+    
+    recipient_config examples:
+    - Individual students: {"student_ids": ["uuid1", "uuid2"]}
+    - Individual teachers: {"teacher_ids": ["uuid1", "uuid2"]}
+    - Entire class: {"class_id": "class-uuid"}
+    - Entire grade: {"grade": "10"}
+    - All students: {} (when recipient_type is "all_students")
+    - All teachers: {} (when recipient_type is "all_teachers")
+    """
     print("DEBUG: Send notification endpoint called")
     print(f"DEBUG: Sender ID: {sender_id}")
     print(f"DEBUG: Notification data: {notification_data.model_dump()}")
@@ -415,3 +440,91 @@ async def create_test_notification(
 
         
     
+
+@router.get("/debug/student-classes/{student_id}")
+async def debug_student_classes(
+    student_id: str,
+    tenant_id: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """Debug: Check student's class assignment (without enrollments table)"""
+    try:
+        # Check if student has class_id field
+        student_class_sql = text("""
+            SELECT 
+                s.id,
+                s.class_id,
+                s.first_name,
+                s.last_name,
+                c.class_name,
+                c.grade_level,
+                c.section
+            FROM students s
+            LEFT JOIN classes c ON s.class_id = c.id
+            WHERE s.id = :student_id
+            AND s.tenant_id = :tenant_id
+            AND s.is_deleted = false
+        """)
+        
+        result = await db.execute(student_class_sql, {"student_id": student_id, "tenant_id": tenant_id})
+        student_data = result.fetchone()
+        
+        if not student_data:
+            return {"error": "Student not found"}
+        
+        return {
+            "student_id": student_id,
+            "tenant_id": tenant_id,
+            "student_name": f"{student_data[2]} {student_data[3]}",
+            "class_id": str(student_data[1]) if student_data[1] else None,
+            "class_name": student_data[4],
+            "grade_level": student_data[5],
+            "section": student_data[6]
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Debug failed: {str(e)}")
+
+@router.get("/debug/available-classes")
+async def debug_available_classes(
+    tenant_id: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """Debug: Check what classes exist in the tenant (without enrollments)"""
+    try:
+        classes_sql = text("""
+            SELECT 
+                c.id,
+                c.class_name,
+                c.grade_level,
+                c.section,
+                c.status,
+                COUNT(s.id) as student_count
+            FROM classes c
+            LEFT JOIN students s ON c.id = s.class_id AND s.status = 'active' AND s.is_deleted = false
+            WHERE c.tenant_id = :tenant_id
+            AND c.is_deleted = false
+            GROUP BY c.id, c.class_name, c.grade_level, c.section, c.status
+            ORDER BY c.grade_level, c.section
+        """)
+        
+        result = await db.execute(classes_sql, {"tenant_id": tenant_id})
+        classes = result.fetchall()
+        
+        return {
+            "tenant_id": tenant_id,
+            "total_classes": len(classes),
+            "classes": [
+                {
+                    "class_id": str(c[0]),
+                    "class_name": c[1],
+                    "grade_level": c[2],
+                    "section": c[3],
+                    "status": c[4],
+                    "student_count": c[5]
+                } for c in classes
+            ]
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Debug failed: {str(e)}")

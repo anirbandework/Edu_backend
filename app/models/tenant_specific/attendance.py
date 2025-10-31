@@ -47,10 +47,10 @@ class Attendance(Base):
     
     # Foreign Keys
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
-    user_id = Column(UUID(as_uuid=True), nullable=False, index=True)  # Can be student, teacher, or authority
+    user_id = Column(UUID(as_uuid=True), nullable=False, index=True)  # Polymorphic - can be student, teacher, or authority
     user_type = Column(Enum(UserType), nullable=False)
-    class_id = Column(UUID(as_uuid=True), nullable=True, index=True)  # Nullable for staff attendance
-    marked_by = Column(UUID(as_uuid=True), nullable=False, index=True)  # Who marked the attendance
+    class_id = Column(UUID(as_uuid=True), ForeignKey("classes.id"), nullable=True, index=True)
+    marked_by = Column(UUID(as_uuid=True), nullable=False, index=True)  # Polymorphic - who marked attendance
     marked_by_type = Column(Enum(UserType), nullable=False)
     
     # Attendance Information
@@ -77,7 +77,7 @@ class Attendance(Base):
     is_excused = Column(Boolean, default=False)
     
     # Approval Information
-    approved_by = Column(UUID(as_uuid=True))
+    approved_by = Column(UUID(as_uuid=True))  # Polymorphic - can be any user type
     approved_by_type = Column(Enum(UserType))
     approval_date = Column(DateTime)
     approval_remarks = Column(Text)
@@ -103,6 +103,7 @@ class Attendance(Base):
     
     # Relationships
     tenant = relationship("Tenant")
+    class_ref = relationship("ClassModel", back_populates="attendances")
 
 
 class AttendanceSummary(Base):

@@ -74,7 +74,7 @@ class Notification(Base):
     
     # Foreign Keys
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
-    sender_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    sender_id = Column(UUID(as_uuid=True), nullable=False, index=True)  # Polymorphic - can reference any user type
     sender_type = Column(
         Enum(
             SenderType,

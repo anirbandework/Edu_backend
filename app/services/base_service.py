@@ -91,7 +91,11 @@ class BaseService(Generic[T]):
         return obj
 
     async def update(self, id: Any, obj_in: Dict) -> Optional[T]:
-        obj = await self.get(id)
+        # For soft-deleted records, we need to include them in the search
+        stmt = select(self.model).where(self.model.id == id)
+        result = await self.db.execute(stmt)
+        obj = result.scalar_one_or_none()
+        
         if not obj:
             return None
         for key, value in obj_in.items():
