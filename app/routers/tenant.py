@@ -75,6 +75,8 @@ async def get_tenants(
     page: int = Query(1, ge=1, description="Page number"),
     size: int = Query(20, ge=1, le=100, description="Page size"),
     include_inactive: bool = Query(False, description="Include deactivated schools"),
+    order_by: str = Query("school_name", description="Field to order by"),
+    sort: str = Query("asc", regex="^(asc|desc)$", description="Sort direction"),
     db: AsyncSession = Depends(get_db)
 ):
     """Get all tenants with pagination - active tenants by default"""
@@ -89,6 +91,8 @@ async def get_tenants(
         result = await service.get_paginated(
             page=page, 
             size=size, 
+            order_by=order_by,
+            sort=sort,
             **filters
         )
         

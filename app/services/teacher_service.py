@@ -37,7 +37,18 @@ class TeacherService(BaseService[Teacher]):
         return result.scalar_one_or_none()
     
     async def get_by_email(self, email: str) -> Optional[Teacher]:
-        """Get teacher by email from personal_info JSON"""
+        """Get teacher by email from individual field or personal_info JSON"""
+        # First check individual email field
+        stmt = select(self.model).where(
+            self.model.email == email,
+            self.model.is_deleted == False
+        )
+        result = await self.db.execute(stmt)
+        teacher = result.scalar_one_or_none()
+        if teacher:
+            return teacher
+        
+        # Then check JSON field for backward compatibility
         stmt = select(self.model).where(self.model.is_deleted == False)
         result = await self.db.execute(stmt)
         teachers = result.scalars().all()
@@ -94,11 +105,14 @@ class TeacherService(BaseService[Teacher]):
                         detail=f"Teacher with ID {obj_in.get('teacher_id')} already exists for this school"
                     )
             
-            # Check email uniqueness if provided
-            email = None
-            personal_info = obj_in.get("personal_info", {})
-            if personal_info.get("contact_info", {}).get("primary_email"):
-                email = personal_info["contact_info"]["primary_email"]
+            # Check email uniqueness if provided (check both individual field and JSON)
+            email = obj_in.get("email")
+            if not email:
+                personal_info = obj_in.get("personal_info", {})
+                if personal_info and personal_info.get("contact_info", {}).get("primary_email"):
+                    email = personal_info["contact_info"]["primary_email"]
+            
+            if email:
                 existing_email = await self.get_by_email(email)
                 if existing_email:
                     raise HTTPException(

@@ -17,12 +17,13 @@ class AuthorityCreate(BaseModel):
     last_name: str
     email: EmailStr
     phone: str
-    date_of_birth: datetime
-    address: str
     position: str
+    date_of_birth: Optional[datetime] = None
+    address: Optional[str] = None
+    gender: Optional[str] = None
     qualification: Optional[str] = None
     experience_years: Optional[int] = 0
-    joining_date: datetime
+    joining_date: Optional[datetime] = None
     authority_details: Optional[dict] = None
     permissions: Optional[dict] = None
     school_overview: Optional[dict] = None
@@ -33,6 +34,7 @@ class AuthorityUpdate(BaseModel):
     last_name: Optional[str] = None
     phone: Optional[str] = None
     address: Optional[str] = None
+    gender: Optional[str] = None
     position: Optional[str] = None
     qualification: Optional[str] = None
     experience_years: Optional[int] = None
@@ -72,6 +74,8 @@ async def get_authorities(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
     tenant_id: Optional[UUID] = Query(None),
+    order_by: str = Query("first_name", description="Field to order by"),
+    sort: str = Query("asc", regex="^(asc|desc)$", description="Sort direction"),
     db: AsyncSession = Depends(get_db)
 ):
     """Get paginated school authorities"""
@@ -82,7 +86,13 @@ async def get_authorities(
         filters["tenant_id"] = tenant_id
     
     try:
-        result = await service.get_paginated(page=page, size=size, **filters)
+        result = await service.get_paginated(
+        page=page, 
+        size=size, 
+        order_by=order_by,
+        sort=sort,
+        **filters
+    )
         
         formatted_authorities = [
             {
@@ -154,6 +164,7 @@ async def get_authority(
         "phone": authority.phone,
         "date_of_birth": authority.date_of_birth.isoformat() if authority.date_of_birth else None,
         "address": authority.address,
+        "gender": authority.gender,
         "role": authority.role,
         "status": authority.status,
         "position": authority.position,
@@ -239,8 +250,20 @@ async def bulk_import_authorities(
         tenant_id=import_data.tenant_id
     )
     
+    # Create detailed message
+    message_parts = []
+    if result['successful_imports'] > 0:
+        message_parts.append(f"{result['successful_imports']} authorities imported successfully")
+    if result.get('duplicate_records', 0) > 0:
+        message_parts.append(f"{result['duplicate_records']} duplicates found")
+    validation_errors = result['failed_imports'] - result.get('duplicate_records', 0)
+    if validation_errors > 0:
+        message_parts.append(f"{validation_errors} validation errors")
+    
+    message = "Bulk import completed. " + ", ".join(message_parts) if message_parts else "No records processed"
+    
     return {
-        "message": f"Bulk import completed. {result['successful_imports']} authorities imported successfully",
+        "message": message,
         **result
     }
 

@@ -18,6 +18,7 @@ class Student(Base):  # Changed from BaseModel to Base
     phone = Column(String(20))
     date_of_birth = Column(DateTime, nullable=False)
     address = Column(String(500), nullable=False)
+    gender = Column(String(10), nullable=True)
     
     # Academic Information
     role = Column(String(20), default="student", nullable=False)

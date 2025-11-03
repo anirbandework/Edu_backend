@@ -16,8 +16,9 @@ class SchoolAuthority(Base):
     last_name = Column(String(50), nullable=False)
     email = Column(String(100), nullable=False, unique=True, index=True)
     phone = Column(String(20), nullable=False)
-    date_of_birth = Column(DateTime, nullable=False)
-    address = Column(String(500), nullable=False)
+    date_of_birth = Column(DateTime, nullable=True)
+    address = Column(String(500), nullable=True)
+    gender = Column(String(10), nullable=True)
     
     # Role Information
     role = Column(String(20), default="school_authority", nullable=False)
@@ -25,7 +26,7 @@ class SchoolAuthority(Base):
     position = Column(String(100), nullable=False)
     qualification = Column(String(500))
     experience_years = Column(Integer, default=0)
-    joining_date = Column(DateTime, nullable=False)
+    joining_date = Column(DateTime, nullable=True)
     
     # Authority Details
     authority_details = Column(JSON)

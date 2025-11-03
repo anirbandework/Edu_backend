@@ -37,6 +37,8 @@ class BaseService(Generic[T]):
         page: int = 1, 
         size: int = 20, 
         include_deleted: bool = False,
+        order_by: str = None,
+        sort: str = "asc",
         **filters
     ):
         """Get paginated results with optional soft delete filtering"""
@@ -67,6 +69,14 @@ class BaseService(Generic[T]):
         # Execute count query
         count_result = await self.db.execute(count_stmt)
         total = count_result.scalar()
+        
+        # Add ordering if specified
+        if order_by and hasattr(self.model, order_by):
+            order_field = getattr(self.model, order_by)
+            if sort.lower() == "desc":
+                stmt = stmt.order_by(order_field.desc())
+            else:
+                stmt = stmt.order_by(order_field.asc())
         
         # Execute main query with pagination
         stmt = stmt.offset(offset).limit(size)
