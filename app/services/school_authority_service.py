@@ -2,6 +2,7 @@
 from typing import List, Optional, Dict, Any
 from uuid import UUID
 import uuid
+import json
 from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, text
@@ -78,10 +79,10 @@ class SchoolAuthorityService(BaseService[SchoolAuthority]):
             
         except IntegrityError as e:
             await self.db.rollback()
-            raise HTTPException(status_code=409, detail="Authority already exists")
+            raise HTTPException(status_code=409, detail=f"Database constraint violation: {str(e)}")
         except Exception as e:
             await self.db.rollback()
-            raise HTTPException(status_code=400, detail=str(e))
+            raise HTTPException(status_code=400, detail=f"Error creating authority: {str(e)}")
     
     async def update_login_time(self, authority_id: UUID) -> Optional[SchoolAuthority]:
         """Update last login time for authority"""
@@ -95,49 +96,89 @@ class SchoolAuthorityService(BaseService[SchoolAuthority]):
     # BULK OPERATIONS USING RAW SQL FOR HIGH PERFORMANCE
     
     async def bulk_import_authorities(self, authorities_data: List[dict], tenant_id: UUID) -> dict:
-        """Bulk import school authorities using raw SQL for maximum performance"""
+        """Bulk import school authorities with duplicate detection"""
         try:
             if not authorities_data:
                 raise HTTPException(status_code=400, detail="No authority data provided")
             
-            # Validate and prepare bulk insert data
+            # Check for existing duplicates
+            emails = [auth.get("email") for auth in authorities_data if auth.get("email")]
+            authority_ids = [auth.get("authority_id") for auth in authorities_data if auth.get("authority_id")]
+            
+            existing_check_sql = text("""
+                SELECT email, authority_id FROM school_authorities 
+                WHERE tenant_id = :tenant_id 
+                AND (email = ANY(:emails) OR authority_id = ANY(:authority_ids))
+                AND is_deleted = false
+            """)
+            
+            result = await self.db.execute(existing_check_sql, {
+                "tenant_id": tenant_id,
+                "emails": emails,
+                "authority_ids": authority_ids
+            })
+            
+            existing_records = result.fetchall()
+            existing_emails = {row[0] for row in existing_records}
+            existing_auth_ids = {row[1] for row in existing_records}
+            
+            # Validate and prepare data
             now = datetime.utcnow()
             insert_data = []
             validation_errors = []
+            duplicate_errors = []
             
             for idx, authority_data in enumerate(authorities_data):
                 try:
-                    # Validate required fields
-                    required_fields = ["authority_id", "first_name", "last_name", "email", "phone", "date_of_birth", "address", "position", "joining_date"]
+                    # Check required fields
+                    required_fields = ["authority_id", "first_name", "last_name", "email", "phone", "position"]
                     for field in required_fields:
                         if not authority_data.get(field):
                             validation_errors.append(f"Row {idx + 1}: Missing required field '{field}'")
                             continue
                     
-                    if validation_errors:
+                    # Check for duplicates
+                    email = authority_data.get("email")
+                    auth_id = authority_data.get("authority_id")
+                    
+                    if email in existing_emails:
+                        duplicate_errors.append(f"Row {idx + 1}: Email '{email}' already exists")
                         continue
                     
-                    # Prepare authority record
+                    if auth_id in existing_auth_ids:
+                        duplicate_errors.append(f"Row {idx + 1}: Authority ID '{auth_id}' already exists")
+                        continue
+                    
+                    # Parse datetime fields
+                    date_of_birth = None
+                    if authority_data.get("date_of_birth"):
+                        date_of_birth = datetime.fromisoformat(authority_data["date_of_birth"].replace('Z', '+00:00'))
+                    
+                    joining_date = None
+                    if authority_data.get("joining_date"):
+                        joining_date = datetime.fromisoformat(authority_data["joining_date"].replace('Z', '+00:00'))
+                    
                     authority_record = {
                         "id": str(uuid.uuid4()),
                         "tenant_id": str(tenant_id),
-                        "authority_id": authority_data["authority_id"],
+                        "authority_id": auth_id,
                         "first_name": authority_data["first_name"],
                         "last_name": authority_data["last_name"],
-                        "email": authority_data["email"],
+                        "email": email,
                         "phone": authority_data["phone"],
-                        "date_of_birth": authority_data["date_of_birth"],
-                        "address": authority_data["address"],
+                        "date_of_birth": date_of_birth,
+                        "address": authority_data.get("address"),
                         "role": "school_authority",
                         "status": authority_data.get("status", "active"),
                         "position": authority_data["position"],
                         "qualification": authority_data.get("qualification"),
                         "experience_years": authority_data.get("experience_years", 0),
-                        "joining_date": authority_data["joining_date"],
-                        "authority_details": authority_data.get("authority_details"),
-                        "permissions": authority_data.get("permissions"),
-                        "school_overview": authority_data.get("school_overview"),
-                        "contact_info": authority_data.get("contact_info"),
+                        "joining_date": joining_date,
+                        "authority_details": json.dumps(authority_data.get("authority_details")) if authority_data.get("authority_details") else None,
+                        "permissions": json.dumps(authority_data.get("permissions")) if authority_data.get("permissions") else None,
+                        "school_overview": json.dumps(authority_data.get("school_overview")) if authority_data.get("school_overview") else None,
+                        "contact_info": json.dumps(authority_data.get("contact_info")) if authority_data.get("contact_info") else None,
+                        "last_login": None,
                         "created_at": now,
                         "updated_at": now,
                         "is_deleted": False
@@ -147,36 +188,36 @@ class SchoolAuthorityService(BaseService[SchoolAuthority]):
                 except Exception as e:
                     validation_errors.append(f"Row {idx + 1}: {str(e)}")
             
-            if validation_errors:
-                raise HTTPException(
-                    status_code=400, 
-                    detail={"message": "Validation errors found", "errors": validation_errors}
-                )
-            
-            # Bulk insert using raw SQL
-            bulk_insert_sql = text("""
-                INSERT INTO school_authorities (
-                    id, tenant_id, authority_id, first_name, last_name, email, phone,
-                    date_of_birth, address, role, status, position, qualification,
-                    experience_years, joining_date, authority_details, permissions,
-                    school_overview, contact_info, last_login, created_at, updated_at, is_deleted
-                ) VALUES (
-                    :id, :tenant_id, :authority_id, :first_name, :last_name, :email, :phone,
-                    :date_of_birth, :address, :role, :status, :position, :qualification,
-                    :experience_years, :joining_date, :authority_details, :permissions,
-                    :school_overview, :contact_info, :last_login, :created_at, :updated_at, :is_deleted
-                ) ON CONFLICT (email) DO NOTHING
-            """)
-            
-            result = await self.db.execute(bulk_insert_sql, insert_data)
-            await self.db.commit()
+            # Insert only non-duplicate records
+            successful_imports = 0
+            if insert_data:
+                bulk_insert_sql = text("""
+                    INSERT INTO school_authorities (
+                        id, tenant_id, authority_id, first_name, last_name, email, phone,
+                        date_of_birth, address, role, status, position, qualification,
+                        experience_years, joining_date, authority_details, permissions,
+                        school_overview, contact_info, last_login, created_at, updated_at, is_deleted
+                    ) VALUES (
+                        :id, :tenant_id, :authority_id, :first_name, :last_name, :email, :phone,
+                        :date_of_birth, :address, :role, :status, :position, :qualification,
+                        :experience_years, :joining_date, :authority_details, :permissions,
+                        :school_overview, :contact_info, :last_login, :created_at, :updated_at, :is_deleted
+                    )
+                """)
+                
+                await self.db.execute(bulk_insert_sql, insert_data)
+                await self.db.commit()
+                successful_imports = len(insert_data)
             
             return {
                 "total_records_processed": len(authorities_data),
-                "successful_imports": len(insert_data),
-                "failed_imports": len(validation_errors),
+                "successful_imports": successful_imports,
+                "failed_imports": len(validation_errors) + len(duplicate_errors),
+                "duplicate_records": len(duplicate_errors),
+                "validation_errors": validation_errors if validation_errors else None,
+                "duplicate_errors": duplicate_errors if duplicate_errors else None,
                 "tenant_id": str(tenant_id),
-                "status": "success"
+                "status": "success" if successful_imports > 0 else "failed"
             }
             
         except Exception as e:
@@ -249,8 +290,12 @@ class SchoolAuthorityService(BaseService[SchoolAuthority]):
                 {"tenant_id": tenant_id, "authority_ids": authority_ids}
             )
             
-            authorities_data = {row[1]: {"id": row[0], "permissions": row[2] or {}} 
-                               for row in result.fetchall()}
+            authorities_data = {}
+            for row in result.fetchall():
+                permissions = row[2] or {}
+                if isinstance(permissions, str):
+                    permissions = json.loads(permissions)
+                authorities_data[row[1]] = {"id": row[0], "permissions": permissions}
             
             # Update permissions for each authority
             updated_count = 0
@@ -276,7 +321,7 @@ class SchoolAuthorityService(BaseService[SchoolAuthority]):
                 await self.db.execute(
                     update_authority_sql,
                     {
-                        "permissions": current_permissions,
+                        "permissions": json.dumps(current_permissions),
                         "updated_at": datetime.utcnow(),
                         "authority_id": authorities_data[authority_id]["id"]
                     }
@@ -297,47 +342,43 @@ class SchoolAuthorityService(BaseService[SchoolAuthority]):
             raise HTTPException(status_code=500, detail=f"Bulk permission update failed: {str(e)}")
     
     async def bulk_update_positions(self, position_updates: List[dict], tenant_id: UUID) -> dict:
-        """Bulk update authority positions using raw SQL"""
+        """Bulk update authority positions using individual updates"""
         try:
             if not position_updates:
                 raise HTTPException(status_code=400, detail="No position update data provided")
             
-            # Prepare update data
-            update_cases = []
-            authority_ids = []
+            updated_count = 0
             
             for update in position_updates:
-                authority_ids.append(update["authority_id"])
-                position = update["new_position"]
-                update_cases.append(f"WHEN '{update['authority_id']}' THEN '{position}'")
-            
-            if not update_cases:
-                raise HTTPException(status_code=400, detail="No valid position updates provided")
-            
-            # Build and execute bulk update SQL
-            cases_sql = " ".join(update_cases)
-            bulk_update_sql = text(f"""
-                UPDATE school_authorities 
-                SET position = CASE authority_id {cases_sql} ELSE position END,
-                    updated_at = :updated_at
-                WHERE tenant_id = :tenant_id
-                AND authority_id IN :authority_ids
-                AND is_deleted = false
-            """)
-            
-            result = await self.db.execute(
-                bulk_update_sql,
-                {
-                    "updated_at": datetime.utcnow(),
-                    "tenant_id": tenant_id,
-                    "authority_ids": tuple(authority_ids)
-                }
-            )
+                authority_id = update["authority_id"]
+                new_position = update["new_position"]
+                
+                update_sql = text("""
+                    UPDATE school_authorities 
+                    SET position = :new_position,
+                        updated_at = :updated_at
+                    WHERE tenant_id = :tenant_id
+                    AND authority_id = :authority_id
+                    AND is_deleted = false
+                """)
+                
+                result = await self.db.execute(
+                    update_sql,
+                    {
+                        "new_position": new_position,
+                        "updated_at": datetime.utcnow(),
+                        "tenant_id": tenant_id,
+                        "authority_id": authority_id
+                    }
+                )
+                
+                if result.rowcount > 0:
+                    updated_count += 1
             
             await self.db.commit()
             
             return {
-                "updated_authorities": result.rowcount,
+                "updated_authorities": updated_count,
                 "total_requests": len(position_updates),
                 "tenant_id": str(tenant_id),
                 "status": "success"

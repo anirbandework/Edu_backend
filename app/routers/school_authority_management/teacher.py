@@ -13,6 +13,20 @@ from ...services.teacher_service import TeacherService
 class TeacherCreate(BaseModel):
     tenant_id: UUID
     teacher_id: str
+    first_name: str
+    last_name: str
+    email: EmailStr
+    phone: str
+    position: str
+    date_of_birth: Optional[datetime] = None
+    gender: Optional[str] = None
+    address: Optional[str] = None
+    joining_date: Optional[datetime] = None
+    role: Optional[str] = "teacher"
+    status: Optional[str] = "active"
+    qualification: Optional[str] = None
+    experience_years: Optional[int] = 0
+    teacher_details: Optional[dict] = None
     personal_info: Optional[dict] = None
     contact_info: Optional[dict] = None
     family_info: Optional[dict] = None
@@ -23,6 +37,15 @@ class TeacherCreate(BaseModel):
     performance_evaluation: Optional[dict] = None
 
 class TeacherUpdate(BaseModel):
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    gender: Optional[str] = None
+    position: Optional[str] = None
+    qualification: Optional[str] = None
+    experience_years: Optional[int] = None
+    teacher_details: Optional[dict] = None
     personal_info: Optional[dict] = None
     contact_info: Optional[dict] = None
     family_info: Optional[dict] = None
@@ -81,20 +104,20 @@ async def get_teachers(
                 "tenant_id": str(teacher.tenant_id),
                 "teacher_id": teacher.teacher_id,
                 
-                # Extract basic info from JSON
-                "first_name": teacher.personal_info.get('basic_details', {}).get('first_name', '') if teacher.personal_info else '',
-                "last_name": teacher.personal_info.get('basic_details', {}).get('last_name', '') if teacher.personal_info else '',
-                "title": teacher.personal_info.get('basic_details', {}).get('title', '') if teacher.personal_info else '',
-                "email": teacher.personal_info.get('contact_info', {}).get('primary_email', '') if teacher.personal_info else '',
-                "phone": teacher.personal_info.get('contact_info', {}).get('primary_phone', '') if teacher.personal_info else '',
+                # Use individual fields first, fallback to JSON
+                "first_name": teacher.first_name or (teacher.personal_info.get('basic_details', {}).get('first_name', '') if teacher.personal_info else ''),
+                "last_name": teacher.last_name or (teacher.personal_info.get('basic_details', {}).get('last_name', '') if teacher.personal_info else ''),
+                "email": teacher.email or (teacher.personal_info.get('contact_info', {}).get('primary_email', '') if teacher.personal_info else ''),
+                "phone": teacher.phone or (teacher.personal_info.get('contact_info', {}).get('primary_phone', '') if teacher.personal_info else ''),
+                "gender": teacher.gender,
                 
                 # Employment info
-                "position": teacher.employment.get('job_information', {}).get('current_position', '') if teacher.employment else '',
-                "department": teacher.employment.get('job_information', {}).get('department', '') if teacher.employment else '',
-                "joining_date": teacher.employment.get('job_information', {}).get('joining_date', '') if teacher.employment else '',
+                "position": teacher.position or (teacher.employment.get('job_information', {}).get('current_position', '') if teacher.employment else ''),
+                "department": (teacher.teacher_details.get('department', '') if teacher.teacher_details else '') or (teacher.employment.get('job_information', {}).get('department', '') if teacher.employment else ''),
+                "joining_date": (teacher.joining_date.isoformat() if teacher.joining_date else '') or (teacher.employment.get('job_information', {}).get('joining_date', '') if teacher.employment else ''),
                 
                 # Teaching subjects
-                "subjects": [assignment.get('subject', '') for assignment in teacher.academic_responsibilities.get('teaching_assignments', []) if teacher.academic_responsibilities] if teacher.academic_responsibilities else [],
+                "subjects": [assignment.get('subject', '') for assignment in (teacher.academic_responsibilities.get('teaching_assignments', []) if teacher.academic_responsibilities else [])],
                 
                 "status": teacher.status,
                 "last_login": teacher.last_login.isoformat() if teacher.last_login else None,

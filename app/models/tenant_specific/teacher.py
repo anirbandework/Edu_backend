@@ -12,11 +12,26 @@ class Teacher(Base):
     
     # Basic Information
     teacher_id = Column(String(20), nullable=False, index=True)
+    gender = Column(String(10), nullable=True)
+    
+    # New individual fields (optional, can be null if using JSON)
+    first_name = Column(String(50), nullable=True)
+    last_name = Column(String(50), nullable=True)
+    email = Column(String(100), nullable=True, index=True)
+    phone = Column(String(20), nullable=True)
+    date_of_birth = Column(DateTime, nullable=True)
+    address = Column(String(500), nullable=True)
+    position = Column(String(100), nullable=True)
+    joining_date = Column(DateTime, nullable=True)
+    role = Column(String(20), default="teacher", nullable=False)
+    qualification = Column(String(500), nullable=True)
+    experience_years = Column(Integer, default=0)
+    
+    # Original JSON fields (kept for backward compatibility)
+    teacher_details = Column(JSON)
     personal_info = Column(JSON)  # Contains all personal details
     contact_info = Column(JSON)   # Contains contact information
     family_info = Column(JSON)    # Contains family details
-    
-    # Professional Information
     qualifications = Column(JSON)         # Education and certifications
     employment = Column(JSON)            # Job details and salary
     academic_responsibilities = Column(JSON)  # Teaching assignments
