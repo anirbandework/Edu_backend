@@ -1,0 +1,9 @@
+.venv
+/.venv/*
+.venv_311
+/.venv_311/*
+
+__pycache__/
+/schemas/__pycache__
+.env
+/env/*

@@ -1,0 +1,44 @@
+# Core stack
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+
+# Database
+sqlalchemy==2.0.25
+alembic==1.12.1
+asyncpg==0.29.0
+redis==5.0.1
+
+# Data validation & serialization
+pydantic==2.5.3
+pydantic-settings==2.1.0
+email-validator==2.1.0
+
+# Security & Authentication
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-multipart==0.0.6
+PyJWT==2.8.0
+cryptography==41.0.7
+
+# Environment variables
+python-dotenv==1.0.0
+
+# HTTP clients
+httpx==0.25.2
+requests==2.32.5
+
+# AI - Gemini
+google-generativeai==0.3.2
+
+# Production server
+gunicorn==21.2.0
+
+# File & text processing
+chardet==5.2.0
+
+# performance & speed
+orjson==3.9.10
+
+# Additional essentials
+greenlet>=2.0.0
+typing-extensions>=4.8.0
