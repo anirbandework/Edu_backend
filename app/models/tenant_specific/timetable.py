@@ -262,18 +262,24 @@ class ScheduleEntry(Base):
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
     class_timetable_id = Column(UUID(as_uuid=True), ForeignKey("class_timetables.id"), nullable=False, index=True)
     teacher_timetable_id = Column(UUID(as_uuid=True), ForeignKey("teacher_timetables.id"), nullable=True, index=True)
-    period_id = Column(UUID(as_uuid=True), ForeignKey("periods.id"), nullable=False, index=True)
+    period_id = Column(UUID(as_uuid=True), ForeignKey("periods.id"), nullable=True, index=True)
     subject_id = Column(UUID(as_uuid=True), ForeignKey("subjects.id"), nullable=True, index=True)
     
     # Schedule Information
     day_of_week = Column(Enum(DayOfWeek), nullable=False, index=True)
+    period_number = Column(Integer, nullable=False)
+    start_time = Column(Time, nullable=True)
+    end_time = Column(Time, nullable=True)
     subject_name = Column(String(100), nullable=False)
     subject_code = Column(String(20))
+    
+    # Teacher Information
+    teacher_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+    teacher_name = Column(String(200))
     
     # Location Information
     room_number = Column(String(20))
     building = Column(String(50))
-    teacher_name = Column(String(200))
     
     # Status
     is_active = Column(Boolean, default=True)
@@ -300,7 +306,12 @@ class TimetableConflict(Base):
     severity = Column(Enum(ConflictSeverity), default=ConflictSeverity.MEDIUM, nullable=False)
     title = Column(String(200), nullable=False)
     description = Column(Text, nullable=False)
+    day_of_week = Column(String(20))
+    period_number = Column(Integer)
+    room_number = Column(String(20))
     is_resolved = Column(Boolean, default=False)
+    resolution_notes = Column(Text)
+    resolved_date = Column(DateTime)
     
     tenant = relationship("Tenant")
 

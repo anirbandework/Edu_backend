@@ -12,22 +12,22 @@ class Student(Base):  # Changed from BaseModel to Base
     
     # Basic Information
     student_id = Column(String(20), nullable=False, index=True)
-    first_name = Column(String(50), nullable=False)
-    last_name = Column(String(50), nullable=False)
+    first_name = Column(String(50), nullable=True)
+    last_name = Column(String(50), nullable=True)
     email = Column(String(100), index=True)
-    phone = Column(String(20))
-    date_of_birth = Column(DateTime, nullable=False)
-    address = Column(String(500), nullable=False)
+    phone = Column(String(20), nullable=True, index=True)
+    date_of_birth = Column(DateTime, nullable=True)
+    address = Column(String(500), nullable=True)
     gender = Column(String(10), nullable=True)
     
     # Academic Information
     role = Column(String(20), default="student", nullable=False)
     status = Column(String(20), default="active", nullable=False)
-    admission_number = Column(String(20), nullable=False, index=True)
+    admission_number = Column(String(20), nullable=True, index=True)
     roll_number = Column(String(20))
-    grade_level = Column(Integer, nullable=False)
+    grade_level = Column(Integer, nullable=True)
     section = Column(String(10))
-    academic_year = Column(String(10), nullable=False)
+    academic_year = Column(String(10), nullable=True)
     
     # Extended Information (JSON fields for flexibility)
     parent_info = Column(JSON)           # Parent/guardian details

@@ -102,6 +102,18 @@ class EnrollmentService(BaseService[Enrollment]):
             # Create enrollment
             enrollment = await super().create(obj_in)
             
+            # Update student grade level to match class grade level
+            from .student_service import StudentService
+            student_service = StudentService(self.db)
+            student = await student_service.get(obj_in.get("student_id"))
+            
+            if student and class_obj and student.grade_level != class_obj.grade_level:
+                await student_service.update(student.id, {
+                    "grade_level": class_obj.grade_level,
+                    "section": class_obj.section,
+                    "academic_year": class_obj.academic_year
+                })
+            
             # Update class student count
             if class_obj:
                 await class_service.update_student_count(

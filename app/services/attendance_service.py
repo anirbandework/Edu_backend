@@ -156,100 +156,127 @@ class AttendanceService(BaseService[Attendance]):
     # BULK OPERATIONS USING RAW SQL FOR HIGH PERFORMANCE
     
     async def bulk_mark_attendance(self, attendance_records: List[dict], tenant_id: UUID) -> dict:
-        """Bulk mark attendance using raw SQL for maximum performance"""
+        """Bulk mark attendance with update logic to prevent duplicates"""
         try:
             if not attendance_records:
                 raise HTTPException(status_code=400, detail="No attendance records provided")
             
-            # Validate and prepare bulk insert data
             now = datetime.utcnow()
-            today = date.today()
-            insert_data = []
-            validation_errors = []
+            successful_records = 0
+            failed_records = 0
             
-            for idx, record in enumerate(attendance_records):
+            for record in attendance_records:
                 try:
-                    # Validate required fields
-                    required_fields = ["user_id", "user_type", "marked_by", "marked_by_type"]
-                    for field in required_fields:
-                        if not record.get(field):
-                            validation_errors.append(f"Row {idx + 1}: Missing required field '{field}'")
-                            continue
+                    user_id = record["user_id"]
+                    attendance_date = record.get("attendance_date", date.today())
+                    attendance_type = record.get("attendance_type", "DAILY")
+                    class_id = record.get("class_id")
                     
-                    if validation_errors:
-                        continue
+                    # Check if attendance already exists
+                    if class_id:
+                        check_sql = text("""
+                            SELECT id FROM attendances 
+                            WHERE user_id = :user_id 
+                            AND attendance_date = :attendance_date 
+                            AND attendance_type = :attendance_type
+                            AND class_id = :class_id
+                            AND is_deleted = false
+                        """)
+                        params = {
+                            "user_id": user_id,
+                            "attendance_date": attendance_date,
+                            "attendance_type": attendance_type,
+                            "class_id": class_id
+                        }
+                    else:
+                        check_sql = text("""
+                            SELECT id FROM attendances 
+                            WHERE user_id = :user_id 
+                            AND attendance_date = :attendance_date 
+                            AND attendance_type = :attendance_type
+                            AND class_id IS NULL
+                            AND is_deleted = false
+                        """)
+                        params = {
+                            "user_id": user_id,
+                            "attendance_date": attendance_date,
+                            "attendance_type": attendance_type
+                        }
                     
-                    # Prepare attendance record
-                    attendance_record = {
-                        "id": str(uuid.uuid4()),
-                        "tenant_id": str(tenant_id),
-                        "user_id": str(record["user_id"]),
-                        "user_type": record["user_type"],
-                        "marked_by": str(record["marked_by"]),
-                        "marked_by_type": record["marked_by_type"],
-                        "class_id": str(record["class_id"]) if record.get("class_id") else None,
-                        "attendance_date": record.get("attendance_date", today),
-                        "attendance_time": now,
-                        "attendance_type": record.get("attendance_type", "daily"),
-                        "attendance_mode": record.get("attendance_mode", "manual"),
-                        "status": record.get("status", "present"),
-                        "check_in_time": record.get("check_in_time"),
-                        "check_out_time": record.get("check_out_time"),
-                        "period_number": record.get("period_number"),
-                        "subject_name": record.get("subject_name"),
-                        "location": record.get("location"),
-                        "remarks": record.get("remarks"),
-                        "reason_for_absence": record.get("reason_for_absence"),
-                        "academic_year": record.get("academic_year", "2025-26"),
-                        "term": record.get("term"),
-                        "batch_id": str(uuid.uuid4()),  # Same batch for all records
-                        "import_source": "bulk_upload",
-                        "created_at": now,
-                        "updated_at": now,
-                        "is_deleted": False
-                    }
-                    insert_data.append(attendance_record)
+                    existing = await self.db.execute(check_sql, params)
+                    
+                    existing_record = existing.fetchone()
+                    
+                    if existing_record:
+                        # Update existing record
+                        update_sql = text("""
+                            UPDATE attendances SET
+                                status = :status,
+                                marked_by = :marked_by,
+                                marked_by_type = :marked_by_type,
+                                attendance_time = :attendance_time,
+                                remarks = :remarks,
+                                updated_at = :updated_at
+                            WHERE id = :id
+                        """)
+                        
+                        await self.db.execute(update_sql, {
+                            "id": existing_record[0],
+                            "status": record.get("status", "PRESENT"),
+                            "marked_by": record["marked_by"],
+                            "marked_by_type": record["marked_by_type"],
+                            "attendance_time": now,
+                            "remarks": record.get("remarks", ""),
+                            "updated_at": now
+                        })
+                    else:
+                        # Insert new record
+                        insert_sql = text("""
+                            INSERT INTO attendances (
+                                id, tenant_id, user_id, user_type, marked_by, marked_by_type,
+                                class_id, attendance_date, attendance_time, attendance_type,
+                                attendance_mode, status, remarks, academic_year,
+                                created_at, updated_at, is_deleted
+                            ) VALUES (
+                                :id, :tenant_id, :user_id, :user_type, :marked_by, :marked_by_type,
+                                :class_id, :attendance_date, :attendance_time, :attendance_type,
+                                :attendance_mode, :status, :remarks, :academic_year,
+                                :created_at, :updated_at, :is_deleted
+                            )
+                        """)
+                        
+                        await self.db.execute(insert_sql, {
+                            "id": str(uuid.uuid4()),
+                            "tenant_id": str(tenant_id),
+                            "user_id": str(user_id),
+                            "user_type": record["user_type"],
+                            "marked_by": str(record["marked_by"]),
+                            "marked_by_type": record["marked_by_type"],
+                            "class_id": str(class_id) if class_id else None,
+                            "attendance_date": attendance_date,
+                            "attendance_time": now,
+                            "attendance_type": attendance_type,
+                            "attendance_mode": record.get("attendance_mode", "MANUAL"),
+                            "status": record.get("status", "PRESENT"),
+                            "remarks": record.get("remarks", ""),
+                            "academic_year": record.get("academic_year", "2025-26"),
+                            "created_at": now,
+                            "updated_at": now,
+                            "is_deleted": False
+                        })
+                    
+                    successful_records += 1
                     
                 except Exception as e:
-                    validation_errors.append(f"Row {idx + 1}: {str(e)}")
+                    failed_records += 1
+                    continue
             
-            if validation_errors:
-                raise HTTPException(
-                    status_code=400, 
-                    detail={"message": "Validation errors found", "errors": validation_errors}
-                )
-            
-            # Bulk insert using raw SQL with conflict resolution
-            bulk_insert_sql = text("""
-                INSERT INTO attendances (
-                    id, tenant_id, user_id, user_type, marked_by, marked_by_type,
-                    class_id, attendance_date, attendance_time, attendance_type,
-                    attendance_mode, status, check_in_time, check_out_time,
-                    period_number, subject_name, location, remarks, reason_for_absence,
-                    academic_year, term, batch_id, import_source, created_at, updated_at, is_deleted
-                ) VALUES (
-                    :id, :tenant_id, :user_id, :user_type, :marked_by, :marked_by_type,
-                    :class_id, :attendance_date, :attendance_time, :attendance_type,
-                    :attendance_mode, :status, :check_in_time, :check_out_time,
-                    :period_number, :subject_name, :location, :remarks, :reason_for_absence,
-                    :academic_year, :term, :batch_id, :import_source, :created_at, :updated_at, :is_deleted
-                ) ON CONFLICT (user_id, attendance_date, attendance_type, period_number) 
-                DO UPDATE SET
-                    status = EXCLUDED.status,
-                    marked_by = EXCLUDED.marked_by,
-                    marked_by_type = EXCLUDED.marked_by_type,
-                    attendance_time = EXCLUDED.attendance_time,
-                    updated_at = EXCLUDED.updated_at
-            """)
-            
-            await self.db.execute(bulk_insert_sql, insert_data)
             await self.db.commit()
             
             return {
                 "total_records_processed": len(attendance_records),
-                "successful_records": len(insert_data),
-                "failed_records": len(validation_errors),
-                "batch_id": insert_data[0]["batch_id"] if insert_data else None,
+                "successful_records": successful_records,
+                "failed_records": failed_records,
                 "tenant_id": str(tenant_id),
                 "status": "success"
             }

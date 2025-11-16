@@ -3,7 +3,7 @@ from typing import List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from datetime import datetime
 from ...core.database import get_db
 from ...models.tenant_specific.teacher import Teacher
@@ -63,20 +63,37 @@ class BulkTeacherImport(BaseModel):
 
 class BulkStatusUpdate(BaseModel):
     tenant_id: UUID
-    teacher_ids: List[str]
-    new_status: str
+    teacher_uuids: List[UUID] = Field(alias="teacher-uuids")
+    new_status: str  # active, inactive, resigned, terminated, on_leave
+
+class SubjectAssignment(BaseModel):
+    subject: str
+    grade: Optional[str] = None
+    section: Optional[str] = None
+    hours_per_week: Optional[int] = None
+
+class TeacherSubjectAssignment(BaseModel):
+    teacher_uuid: UUID = Field(alias="teacher-uuid")
+    subjects: List[SubjectAssignment]
 
 class BulkSubjectAssignment(BaseModel):
     tenant_id: UUID
-    assignments: List[dict]  # [{"teacher_id": "TCH001", "subjects": [{"subject": "Math", "grade": 10}]}]
+    assignments: List[TeacherSubjectAssignment]
+
+class SalaryUpdate(BaseModel):
+    teacher_uuid: UUID = Field(alias="teacher-uuid")
+    basic_salary: float
+    allowances: Optional[dict] = None
+    effective_date: Optional[datetime] = None
+    reason: Optional[str] = None
 
 class BulkSalaryUpdate(BaseModel):
     tenant_id: UUID
-    salary_updates: List[dict]  # [{"teacher_id": "TCH001", "new_salary": 60000, "effective_date": "2024-01-01"}]
+    salary_updates: List[SalaryUpdate]
 
 class BulkDeleteRequest(BaseModel):
     tenant_id: UUID
-    teacher_ids: List[str]
+    teacher_uuids: List[UUID] = Field(alias="teacher-uuids")
 
 router = APIRouter(prefix="/api/v1/school_authority/teachers", tags=["School Authority - Teacher Management"])
 
@@ -109,12 +126,21 @@ async def get_teachers(
                 "last_name": teacher.last_name or (teacher.personal_info.get('basic_details', {}).get('last_name', '') if teacher.personal_info else ''),
                 "email": teacher.email or (teacher.personal_info.get('contact_info', {}).get('primary_email', '') if teacher.personal_info else ''),
                 "phone": teacher.phone or (teacher.personal_info.get('contact_info', {}).get('primary_phone', '') if teacher.personal_info else ''),
+                "date_of_birth": teacher.date_of_birth.isoformat() if teacher.date_of_birth else None,
                 "gender": teacher.gender,
+                "address": teacher.address,
                 
                 # Employment info
                 "position": teacher.position or (teacher.employment.get('job_information', {}).get('current_position', '') if teacher.employment else ''),
                 "department": (teacher.teacher_details.get('department', '') if teacher.teacher_details else '') or (teacher.employment.get('job_information', {}).get('department', '') if teacher.employment else ''),
                 "joining_date": (teacher.joining_date.isoformat() if teacher.joining_date else '') or (teacher.employment.get('job_information', {}).get('joining_date', '') if teacher.employment else ''),
+                "role": teacher.role,
+                "qualification": teacher.qualification,
+                "experience_years": teacher.experience_years,
+                
+                # JSON fields
+                "academic_responsibilities": teacher.academic_responsibilities,
+                "teacher_details": teacher.teacher_details,
                 
                 # Teaching subjects
                 "subjects": [assignment.get('subject', '') for assignment in (teacher.academic_responsibilities.get('teaching_assignments', []) if teacher.academic_responsibilities else [])],
@@ -173,6 +199,8 @@ async def get_teacher(
         "id": str(teacher.id),
         "tenant_id": str(teacher.tenant_id),
         "teacher_id": teacher.teacher_id,
+        "first_name": teacher.first_name,
+        "last_name": teacher.last_name,
         "personal_info": teacher.personal_info,
         "contact_info": teacher.contact_info,
         "family_info": teacher.family_info,
@@ -295,7 +323,7 @@ async def bulk_update_status(
     service = TeacherService(db)
     
     result = await service.bulk_update_status(
-        teacher_ids=status_data.teacher_ids,
+        teacher_uuids=status_data.teacher_uuids,
         new_status=status_data.new_status,
         tenant_id=status_data.tenant_id
     )
@@ -314,7 +342,7 @@ async def bulk_assign_subjects(
     service = TeacherService(db)
     
     result = await service.bulk_assign_subjects(
-        subject_assignments=assignment_data.assignments,
+        subject_assignments=[assignment.model_dump(by_alias=True) for assignment in assignment_data.assignments],
         tenant_id=assignment_data.tenant_id
     )
     
@@ -332,7 +360,7 @@ async def bulk_update_salaries(
     service = TeacherService(db)
     
     result = await service.bulk_salary_update(
-        salary_updates=salary_data.salary_updates,
+        salary_updates=[update.model_dump(by_alias=True) for update in salary_data.salary_updates],
         tenant_id=salary_data.tenant_id
     )
     
@@ -350,7 +378,7 @@ async def bulk_delete_teachers(
     service = TeacherService(db)
     
     result = await service.bulk_soft_delete(
-        teacher_ids=delete_data.teacher_ids,
+        teacher_uuids=delete_data.teacher_uuids,
         tenant_id=delete_data.tenant_id
     )
     

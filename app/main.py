@@ -25,8 +25,7 @@ from .routers.school_authority_management.class_management import router as clas
 from .routers.school_authority_management.enrollment import router as enrollment_router
 from .routers.school_authority_management.notifications import router as notifications_router
 from .routers.school_authority_management.attendance import router as attendance_router
-from .routers.school_authority_management.timetable import router as timetable_router
-from .routers.teacher_assignment import router as teacher_assignment_router  
+from .routers.school_authority_management.timetable import router as timetable_router  
 
 logging.basicConfig(
     level=logging.INFO,
@@ -158,9 +157,18 @@ async def add_process_time_header(request: Request, call_next):
 # CORS configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins if hasattr(settings, 'cors_origins') else ["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:3001", 
+        "http://localhost:8080",
+        "http://localhost:53657",
+        "http://127.0.0.1:53657",
+        "http://192.168.1.10:8000",
+        "http://192.168.1.10:3000",
+        "*"
+    ],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
     max_age=3600,
 )
@@ -177,7 +185,6 @@ app.include_router(enrollment_router)
 app.include_router(notifications_router)
 app.include_router(attendance_router)
 app.include_router(timetable_router)
-app.include_router(teacher_assignment_router)
 
 
 

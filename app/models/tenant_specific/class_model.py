@@ -1,5 +1,5 @@
 # app/models/tenant_specific/class_model.py
-from sqlalchemy import Column, String, Integer, ForeignKey, Boolean
+from sqlalchemy import Column, String, Integer, ForeignKey, Boolean, JSON
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from ..base import Base  # Changed from BaseModel to Base
@@ -20,16 +20,16 @@ class ClassModel(Base):  # Changed from BaseModel to Base
     maximum_students = Column(Integer, default=40)
     current_students = Column(Integer, default=0)
     classroom = Column(String(50))
+    assigned_teachers = Column(JSON)  # Store teacher assignments as JSON
     is_active = Column(Boolean, default=True)
     
 
     __table_args__ = (
-        UniqueConstraint("tenant_id", "class_name", "section", "academic_year", name="uq_class_identity"),
+        UniqueConstraint("tenant_id", "class_name", "grade_level", "section", "academic_year", name="uq_class_identity"),
     )
 
     # Relationships
     tenant = relationship("Tenant", back_populates="classes")
     enrollments = relationship("Enrollment", back_populates="class_ref")
-    teacher_assignments = relationship("TeacherAssignment", back_populates="class_ref")
     class_timetables = relationship("ClassTimetable", back_populates="class_ref")
     attendances = relationship("Attendance", back_populates="class_ref")
