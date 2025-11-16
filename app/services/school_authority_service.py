@@ -230,7 +230,7 @@ class SchoolAuthorityService(BaseService[SchoolAuthority]):
             if not authority_ids:
                 raise HTTPException(status_code=400, detail="No authority IDs provided")
             
-            valid_statuses = ["active", "inactive", "suspended", "terminated"]
+            valid_statuses = ["active", "inactive", "resigned", "terminated", "on_leave"]
             if new_status not in valid_statuses:
                 raise HTTPException(
                     status_code=400, 
@@ -433,8 +433,9 @@ class SchoolAuthorityService(BaseService[SchoolAuthority]):
                     COUNT(*) as total_authorities,
                     COUNT(CASE WHEN status = 'active' THEN 1 END) as active_authorities,
                     COUNT(CASE WHEN status = 'inactive' THEN 1 END) as inactive_authorities,
-                    COUNT(CASE WHEN status = 'suspended' THEN 1 END) as suspended_authorities,
+                    COUNT(CASE WHEN status = 'resigned' THEN 1 END) as resigned_authorities,
                     COUNT(CASE WHEN status = 'terminated' THEN 1 END) as terminated_authorities,
+                    COUNT(CASE WHEN status = 'on_leave' THEN 1 END) as on_leave_authorities,
                     AVG(experience_years) as average_experience,
                     MIN(joining_date) as earliest_joining,
                     MAX(joining_date) as latest_joining
@@ -464,11 +465,12 @@ class SchoolAuthorityService(BaseService[SchoolAuthority]):
                 "total_authorities": stats[0] or 0,
                 "active_authorities": stats[1] or 0,
                 "inactive_authorities": stats[2] or 0,
-                "suspended_authorities": stats[3] or 0,
+                "resigned_authorities": stats[3] or 0,
                 "terminated_authorities": stats[4] or 0,
-                "average_experience": float(stats[5]) if stats[5] else 0.0,
-                "earliest_joining": stats[6].isoformat() if stats[6] else None,
-                "latest_joining": stats[7].isoformat() if stats[7] else None,
+                "on_leave_authorities": stats[5] or 0,
+                "average_experience": float(stats[6]) if stats[6] else 0.0,
+                "earliest_joining": stats[7].isoformat() if stats[7] else None,
+                "latest_joining": stats[8].isoformat() if stats[8] else None,
                 "position_distribution": position_distribution,
                 "tenant_id": str(tenant_id)
             }

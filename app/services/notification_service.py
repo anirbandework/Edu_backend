@@ -60,20 +60,24 @@ class NotificationService(BaseService[Notification]):
         recipients = await self._generate_recipients(notification)
         notification.total_recipients = len(recipients)
         
-        # Add recipients to database
-        for recipient_data in recipients:
-            recipient = NotificationRecipient(
-                notification_id=notification.id,
-                tenant_id=recipient_data["tenant_id"],
-                recipient_id=recipient_data["recipient_id"],
-                recipient_type=recipient_data["recipient_type"],
-                recipient_name=recipient_data["recipient_name"],
-                recipient_email=recipient_data.get("recipient_email"),
-                recipient_phone=recipient_data.get("recipient_phone"),
-                status=NotificationStatus.DELIVERED.value,
-                delivered_at=datetime.utcnow(),
-            )
-            self.db.add(recipient)
+        # Batch insert recipients for better performance
+        if len(recipients) > 100:  # Use bulk insert for large recipient lists
+            await self._bulk_insert_recipients(notification.id, recipients)
+        else:
+            # Use individual inserts for small lists
+            for recipient_data in recipients:
+                recipient = NotificationRecipient(
+                    notification_id=notification.id,
+                    tenant_id=recipient_data["tenant_id"],
+                    recipient_id=recipient_data["recipient_id"],
+                    recipient_type=recipient_data["recipient_type"],
+                    recipient_name=recipient_data["recipient_name"],
+                    recipient_email=recipient_data.get("recipient_email"),
+                    recipient_phone=recipient_data.get("recipient_phone"),
+                    status=NotificationStatus.DELIVERED.value,
+                    delivered_at=datetime.utcnow(),
+                )
+                self.db.add(recipient)
         
         # Update notification status and counts
         notification.status = NotificationStatus.SENT.value
@@ -95,6 +99,7 @@ class NotificationService(BaseService[Notification]):
         notification_type: Optional[str] = None,
         status: Optional[str] = None,
         unread_only: bool = False,
+        include_archived: bool = False,
         limit: int = 50
     ) -> List[dict]:
         """Get notifications for a specific user (student/teacher) - FIXED VERSION"""
@@ -119,6 +124,10 @@ class NotificationService(BaseService[Notification]):
                 "tenant_id": tenant_id_str
             }
             
+            # Add archive filter
+            if not include_archived:
+                base_where += " AND nr.is_archived = false"
+            
             # Add additional filters
             if notification_type:
                 base_where += " AND n.notification_type = :notification_type"
@@ -131,7 +140,7 @@ class NotificationService(BaseService[Notification]):
             if unread_only:
                 base_where += " AND nr.read_at IS NULL"
             
-            # Main query
+            # Main query with sender name
             notifications_sql = text(f"""
                 SELECT 
                     n.id,
@@ -160,9 +169,20 @@ class NotificationService(BaseService[Notification]):
                     n.created_at,
                     n.updated_at,
                     nr.read_at,
-                    CASE WHEN nr.read_at IS NULL THEN false ELSE true END as is_read
+                    CASE WHEN nr.read_at IS NULL THEN false ELSE true END as is_read,
+                    CASE 
+                        WHEN n.sender_type = 'school_authority' THEN CONCAT(sa.first_name, ' ', sa.last_name)
+                        WHEN n.sender_type = 'teacher' THEN CONCAT(
+                            COALESCE(t.personal_info->'basic_details'->>'first_name', ''),
+                            ' ',
+                            COALESCE(t.personal_info->'basic_details'->>'last_name', '')
+                        )
+                        ELSE 'System'
+                    END as sender_name
                 FROM notifications n
                 JOIN notification_recipients nr ON n.id = nr.notification_id
+                LEFT JOIN school_authorities sa ON n.sender_id = sa.id AND n.sender_type = 'school_authority'
+                LEFT JOIN teachers t ON n.sender_id = t.id AND n.sender_type = 'teacher'
                 {base_where}
                 ORDER BY n.created_at DESC
                 LIMIT :limit
@@ -182,6 +202,7 @@ class NotificationService(BaseService[Notification]):
                     "tenant_id": str(row[1]),
                     "sender_id": str(row[2]),
                     "sender_type": row[3],
+                    "sender_name": row[27].strip() if row[27] else "Unknown",
                     "title": row[4],
                     "message": row[5],
                     "short_message": row[6],
@@ -204,7 +225,8 @@ class NotificationService(BaseService[Notification]):
                     "created_at": row[23].isoformat() if row[23] else None,
                     "updated_at": row[24].isoformat() if row[24] else None,
                     "read_at": row[25].isoformat() if row[25] else None,
-                    "is_read": row[26]
+                    "is_read": row[26],
+                    "is_archived": False  # These are non-archived notifications
                 }
                 notifications.append(notification)
             
@@ -303,9 +325,11 @@ class NotificationService(BaseService[Notification]):
                 # Individual recipients
                 student_ids = recipient_config.get("student_ids", [])
                 teacher_ids = recipient_config.get("teacher_ids", [])
+                school_authority_ids = recipient_config.get("school_authority_ids", [])
                 
                 print(f"DEBUG: Individual - Student IDs: {student_ids}")
                 print(f"DEBUG: Individual - Teacher IDs: {teacher_ids}")
+                print(f"DEBUG: Individual - School Authority IDs: {school_authority_ids}")
                 
                 # Get student details
                 if student_ids:
@@ -366,6 +390,34 @@ class NotificationService(BaseService[Notification]):
                             "recipient_email": row[3],
                             "recipient_phone": row[4]
                         })
+                
+                # Get school authority details
+                if school_authority_ids:
+                    sa_sql = text("""
+                        SELECT id, first_name, last_name, email, phone
+                        FROM school_authorities
+                        WHERE id = ANY(:sa_ids)
+                        AND tenant_id = :tenant_id
+                        AND is_deleted = false
+                    """)
+                    
+                    result = await self.db.execute(
+                        sa_sql,
+                        {"sa_ids": [str(said) for said in school_authority_ids], "tenant_id": str(notification.tenant_id)}
+                    )
+                    
+                    sa_rows = result.fetchall()
+                    print(f"DEBUG: Found {len(sa_rows)} school authorities")
+                    
+                    for row in sa_rows:
+                        recipients.append({
+                            "tenant_id": str(notification.tenant_id),
+                            "recipient_id": str(row[0]),
+                            "recipient_type": "school_authority",
+                            "recipient_name": f"{row[1] or ''} {row[2] or ''}".strip(),
+                            "recipient_email": row[3],
+                            "recipient_phone": row[4]
+                        })
             
             elif recipient_type == RecipientType.ALL_STUDENTS.value:
                 print("DEBUG: Getting all students")
@@ -421,6 +473,31 @@ class NotificationService(BaseService[Notification]):
                         "recipient_phone": row[4]
                     })
             
+            elif recipient_type == RecipientType.ALL_SCHOOL_AUTHORITIES.value:
+                print("DEBUG: Getting all school authorities")
+                # All school authorities in tenant
+                all_sa_sql = text("""
+                    SELECT id, first_name, last_name, email, phone
+                    FROM school_authorities
+                    WHERE tenant_id = :tenant_id
+                    AND status = 'active'
+                    AND is_deleted = false
+                """)
+                
+                result = await self.db.execute(all_sa_sql, {"tenant_id": str(notification.tenant_id)})
+                sa_rows = result.fetchall()
+                print(f"DEBUG: Found {len(sa_rows)} active school authorities")
+                
+                for row in sa_rows:
+                    recipients.append({
+                        "tenant_id": str(notification.tenant_id),
+                        "recipient_id": str(row[0]),
+                        "recipient_type": "school_authority",
+                        "recipient_name": f"{row[1] or ''} {row[2] or ''}".strip(),
+                        "recipient_email": row[3],
+                        "recipient_phone": row[4]
+                    })
+            
             elif recipient_type == RecipientType.CLASS.value:
                 # Class notifications - supports single class, multiple classes, and grade-based
                 class_ids = recipient_config.get("class_ids", [])
@@ -435,78 +512,108 @@ class NotificationService(BaseService[Notification]):
                 
                 # Handle specific class IDs
                 if class_ids:
+                    target = recipient_config.get("target", "students")
+                    
                     for class_id in class_ids:
-                        print(f"DEBUG: Looking for students in class {class_id}")
+                        print(f"DEBUG: Looking for {target} in class {class_id}")
                         
-                        class_students_sql = text("""
-                            SELECT s.id, s.first_name, s.last_name, s.email, s.phone
-                            FROM students s
-                            WHERE s.class_id = :class_id
-                            AND s.tenant_id = :tenant_id
-                            AND s.is_deleted = false
-                            AND s.status = 'active'
-                        """)
+                        if target in ["students", "all"]:
+                            # Get students through enrollments table
+                            class_students_sql = text("""
+                                SELECT s.id, s.first_name, s.last_name, s.email, s.phone
+                                FROM students s
+                                JOIN enrollments e ON s.id = e.student_id
+                                WHERE e.class_id = :class_id
+                                AND s.tenant_id = :tenant_id
+                                AND s.is_deleted = false
+                                AND s.status = 'active'
+                                AND e.status = 'active'
+                            """)
+                            
+                            result = await self.db.execute(
+                                class_students_sql,
+                                {"class_id": str(class_id), "tenant_id": str(notification.tenant_id)}
+                            )
+                            rows = result.fetchall()
+                            
+                            print(f"DEBUG: Found {len(rows)} students in class {class_id}")
+                            for row in rows:
+                                recipients.append({
+                                    "tenant_id": str(notification.tenant_id),
+                                    "recipient_id": str(row[0]),
+                                    "recipient_type": "student",
+                                    "recipient_name": f"{row[1]} {row[2]}",
+                                    "recipient_email": row[3],
+                                    "recipient_phone": row[4]
+                                })
                         
-                        result = await self.db.execute(
-                            class_students_sql,
-                            {"class_id": str(class_id), "tenant_id": str(notification.tenant_id)}
-                        )
-                        rows = result.fetchall()
-                        
-                        print(f"DEBUG: Found {len(rows)} students in class {class_id}")
-                        for row in rows:
-                            recipients.append({
-                                "tenant_id": str(notification.tenant_id),
-                                "recipient_id": str(row[0]),
-                                "recipient_type": "student",
-                                "recipient_name": f"{row[1]} {row[2]}",
-                                "recipient_email": row[3],
-                                "recipient_phone": row[4]
-                            })
+                        if target in ["teachers", "all"]:
+                            # Get teachers assigned to class
+                            class_teachers_sql = text("""
+                                SELECT DISTINCT t.id,
+                                       t.personal_info->'basic_details'->>'first_name' as first_name,
+                                       t.personal_info->'basic_details'->>'last_name' as last_name,
+                                       t.personal_info->'contact_info'->>'primary_email' as email,
+                                       t.personal_info->'contact_info'->>'primary_phone' as phone
+                                FROM teachers t
+                                JOIN classes c ON c.assigned_teachers::jsonb @> ('[{"teacher_id":"' || t.id || '"}]')::jsonb
+                                WHERE c.id = :class_id
+                                AND t.tenant_id = :tenant_id
+                                AND t.is_deleted = false
+                                AND t.status = 'active'
+                                AND c.is_deleted = false
+                            """)
+                            
+                            result = await self.db.execute(
+                                class_teachers_sql,
+                                {"class_id": str(class_id), "tenant_id": str(notification.tenant_id)}
+                            )
+                            teacher_rows = result.fetchall()
+                            
+                            print(f"DEBUG: Found {len(teacher_rows)} teachers in class {class_id}")
+                            for row in teacher_rows:
+                                recipients.append({
+                                    "tenant_id": str(notification.tenant_id),
+                                    "recipient_id": str(row[0]),
+                                    "recipient_type": "teacher",
+                                    "recipient_name": f"{row[1] or ''} {row[2] or ''}".strip(),
+                                    "recipient_email": row[3],
+                                    "recipient_phone": row[4]
+                                })
                 
                 # Handle grade-based notifications
                 elif grades:
                     print(f"DEBUG: Looking for students in grades: {grades}")
                     
-                    # Grade to class mapping based on current assignments
-                    grade_class_mapping = {
-                        9: ["29c39aa8-3179-4e36-baac-2422622efd39"],  # Emma's class
-                        10: ["15a9829e-1ce6-431a-801c-0a83959f8497", "50e03c36-a9ab-488e-926a-0e430f774572"],  # Olivia & Liam
-                        11: ["53b22301-a655-46ec-98fe-6234469bb0bf"],  # Noah's class
-                        12: ["2e4f2183-0d7c-4497-a796-5d725d148557"]   # Sophia's class
-                    }
+                    grade_students_sql = text("""
+                        SELECT s.id, s.first_name, s.last_name, s.email, s.phone
+                        FROM students s
+                        JOIN enrollments e ON s.id = e.student_id
+                        JOIN classes c ON e.class_id = c.id
+                        WHERE c.grade_level = ANY(:grades)
+                        AND s.tenant_id = :tenant_id
+                        AND s.is_deleted = false
+                        AND s.status = 'active'
+                        AND e.status = 'active'
+                        AND c.is_deleted = false
+                    """)
                     
-                    target_class_ids = []
-                    for grade in grades:
-                        if grade in grade_class_mapping:
-                            target_class_ids.extend(grade_class_mapping[grade])
+                    result = await self.db.execute(
+                        grade_students_sql,
+                        {"grades": grades, "tenant_id": str(notification.tenant_id)}
+                    )
+                    rows = result.fetchall()
                     
-                    if target_class_ids:
-                        grade_students_sql = text("""
-                            SELECT s.id, s.first_name, s.last_name, s.email, s.phone
-                            FROM students s
-                            WHERE s.class_id = ANY(:class_ids)
-                            AND s.tenant_id = :tenant_id
-                            AND s.is_deleted = false
-                            AND s.status = 'active'
-                        """)
-                        
-                        result = await self.db.execute(
-                            grade_students_sql,
-                            {"class_ids": target_class_ids, "tenant_id": str(notification.tenant_id)}
-                        )
-                        rows = result.fetchall()
-                        
-                        print(f"DEBUG: Found {len(rows)} students in grades {grades}")
-                        for row in rows:
-                            recipients.append({
-                                "tenant_id": str(notification.tenant_id),
-                                "recipient_id": str(row[0]),
-                                "recipient_type": "student",
-                                "recipient_name": f"{row[1]} {row[2]}",
-                                "recipient_email": row[3],
-                                "recipient_phone": row[4]
-                            })
+                    print(f"DEBUG: Found {len(rows)} students in grades {grades}")
+                    for row in rows:
+                        recipients.append({
+                            "tenant_id": str(notification.tenant_id),
+                            "recipient_id": str(row[0]),
+                            "recipient_type": "student",
+                            "recipient_name": f"{row[1]} {row[2]}",
+                            "recipient_email": row[3],
+                            "recipient_phone": row[4]
+                        })
             
             elif recipient_type == RecipientType.GRADE.value:
                 # Students in specific grades
@@ -545,6 +652,48 @@ class NotificationService(BaseService[Notification]):
                     except Exception as e:
                         print(f"DEBUG: Grade query failed: {str(e)}")
             
+            elif recipient_type == "all_institution":
+                print("DEBUG: Getting all institution members (optimized for large lists)")
+                
+                # Use single optimized query to get all recipients
+                all_recipients_sql = text("""
+                    SELECT 'student' as type, id, first_name, last_name, email, phone
+                    FROM students
+                    WHERE tenant_id = :tenant_id AND status = 'active' AND is_deleted = false
+                    
+                    UNION ALL
+                    
+                    SELECT 'teacher' as type, id,
+                           personal_info->'basic_details'->>'first_name' as first_name,
+                           personal_info->'basic_details'->>'last_name' as last_name,
+                           personal_info->'contact_info'->>'primary_email' as email,
+                           personal_info->'contact_info'->>'primary_phone' as phone
+                    FROM teachers
+                    WHERE tenant_id = :tenant_id AND status = 'active' AND is_deleted = false
+                    
+                    UNION ALL
+                    
+                    SELECT 'school_authority' as type, id, first_name, last_name, email, phone
+                    FROM school_authorities
+                    WHERE tenant_id = :tenant_id AND status = 'active' AND is_deleted = false
+                    
+                    LIMIT 2000
+                """)
+                
+                result = await self.db.execute(all_recipients_sql, {"tenant_id": str(notification.tenant_id)})
+                all_rows = result.fetchall()
+                print(f"DEBUG: Found {len(all_rows)} total institution members")
+                
+                for row in all_rows:
+                    recipients.append({
+                        "tenant_id": str(notification.tenant_id),
+                        "recipient_id": str(row[1]),
+                        "recipient_type": row[0],
+                        "recipient_name": f"{row[2] or ''} {row[3] or ''}".strip(),
+                        "recipient_email": row[4],
+                        "recipient_phone": row[5]
+                    })
+            
             print(f"DEBUG: Generated {len(recipients)} total recipients")
             if len(recipients) == 0:
                 print(f"DEBUG: WARNING - No recipients found for {recipient_type} with config {recipient_config}")
@@ -562,6 +711,57 @@ class NotificationService(BaseService[Notification]):
             # Log error details for debugging
             # Log error for debugging
             raise e
+    
+    async def _bulk_insert_recipients(self, notification_id: UUID, recipients: List[Dict[str, Any]]) -> None:
+        """Bulk insert recipients using raw SQL for better performance"""
+        if not recipients:
+            return
+        
+        # Prepare bulk insert data
+        now = datetime.utcnow()
+        values = []
+        
+        for recipient in recipients:
+            values.append({
+                'notification_id': str(notification_id),
+                'tenant_id': recipient['tenant_id'],
+                'recipient_id': recipient['recipient_id'],
+                'recipient_type': recipient['recipient_type'],
+                'recipient_name': recipient['recipient_name'],
+                'recipient_email': recipient.get('recipient_email'),
+                'recipient_phone': recipient.get('recipient_phone'),
+                'status': NotificationStatus.DELIVERED.value,
+                'delivered_at': now,
+                'created_at': now,
+                'updated_at': now,
+                'is_deleted': False
+            })
+        
+        # Batch insert in chunks of 500
+        chunk_size = 500
+        for i in range(0, len(values), chunk_size):
+            chunk = values[i:i + chunk_size]
+            
+            bulk_insert_sql = text("""
+                INSERT INTO notification_recipients (
+                    notification_id, tenant_id, recipient_id, recipient_type,
+                    recipient_name, recipient_email, recipient_phone, status,
+                    delivered_at, created_at, updated_at, is_deleted
+                ) VALUES 
+            """ + ",".join([
+                "(:notification_id_{i}, :tenant_id_{i}, :recipient_id_{i}, :recipient_type_{i}, "
+                ":recipient_name_{i}, :recipient_email_{i}, :recipient_phone_{i}, :status_{i}, "
+                ":delivered_at_{i}, :created_at_{i}, :updated_at_{i}, :is_deleted_{i})"
+                .format(i=idx) for idx in range(len(chunk))
+            ]))
+            
+            # Flatten parameters
+            params = {}
+            for idx, item in enumerate(chunk):
+                for key, value in item.items():
+                    params[f"{key}_{idx}"] = value
+            
+            await self.db.execute(bulk_insert_sql, params)
     
     # Keep all existing validation and utility methods
     async def _validate_sender_permissions(

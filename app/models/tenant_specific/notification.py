@@ -56,6 +56,8 @@ class RecipientType(enum.Enum):
     ALL_STUDENTS = "all_students"
     ALL_TEACHERS = "all_teachers"
     ALL_STAFF = "all_staff"
+    ALL_SCHOOL_AUTHORITIES = "all_school_authorities"
+    ALL_INSTITUTION = "all_institution"
     DEPARTMENT = "department"
     CUSTOM_GROUP = "custom_group"
     PARENTS = "parents"

@@ -18,6 +18,5 @@ from .tenant_specific.timetable import (
     ScheduleEntry, TimetableConflict, Subject, TimetableTemplate,
     TimetableAuditLog
 )
-from .tenant_specific.teacher_assignment import TeacherAssignment
 
 # This ensures all models are loaded when importing models

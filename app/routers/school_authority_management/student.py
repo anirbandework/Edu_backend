@@ -3,7 +3,7 @@ from typing import List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, field_validator
 from datetime import datetime
 from ...core.database import get_db
 from ...models.tenant_specific.student import Student
@@ -15,17 +15,18 @@ from ...services.student_service import StudentService
 class StudentCreate(BaseModel):
     tenant_id: UUID
     student_id: str
-    first_name: str
-    last_name: str
-    email: Optional[str] = None
     phone: Optional[str] = None
-    date_of_birth: datetime
-    address: str
-    admission_number: str
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    email: Optional[str] = None
+    date_of_birth: Optional[datetime] = None
+    address: Optional[str] = None
+    admission_number: Optional[str] = None
     roll_number: Optional[str] = None
-    grade_level: int
+    grade_level: Optional[int] = None
     section: Optional[str] = None
-    academic_year: str
+    academic_year: Optional[str] = None
+    status: Optional[str] = "active"
     parent_info: Optional[dict] = None
     health_medical_info: Optional[dict] = None
     emergency_information: Optional[dict] = None
@@ -36,6 +37,13 @@ class StudentCreate(BaseModel):
     extracurricular_social: Optional[dict] = None
     attendance_engagement: Optional[dict] = None
     additional_metadata: Optional[dict] = None
+    
+    @field_validator('date_of_birth')
+    @classmethod
+    def convert_datetime_to_naive(cls, v):
+        if v and v.tzinfo is not None:
+            return v.replace(tzinfo=None)
+        return v
 
 class StudentUpdate(BaseModel):
     first_name: Optional[str] = None
@@ -110,7 +118,7 @@ async def get_students(
             section=section
         )
         
-        # Format student data
+        # Format student data with full JSON fields
         formatted_students = [
             {
                 "id": str(student.id),
@@ -120,14 +128,24 @@ async def get_students(
                 "last_name": student.last_name,
                 "email": student.email,
                 "phone": student.phone,
+                "date_of_birth": student.date_of_birth.isoformat() if student.date_of_birth else None,
+                "address": student.address,
                 "grade_level": student.grade_level,
                 "section": student.section,
                 "admission_number": student.admission_number,
                 "roll_number": student.roll_number,
                 "academic_year": student.academic_year,
                 "status": student.status,
-                "parent_name": student.parent_info.get('primary_contact', {}).get('name') if student.parent_info else None,
-                "parent_phone": student.parent_info.get('primary_contact', {}).get('phone') if student.parent_info else None,
+                "parent_info": student.parent_info,
+                "health_medical_info": student.health_medical_info,
+                "emergency_information": student.emergency_information,
+                "behavioral_disciplinary": student.behavioral_disciplinary,
+                "extended_academic_info": student.extended_academic_info,
+                "enrollment_details": student.enrollment_details,
+                "financial_info": student.financial_info,
+                "extracurricular_social": student.extracurricular_social,
+                "attendance_engagement": student.attendance_engagement,
+                "additional_metadata": student.additional_metadata,
                 "created_at": student.created_at.isoformat(),
                 "updated_at": student.updated_at.isoformat()
             }
@@ -335,6 +353,40 @@ async def get_student_classes(
         },
         "classes": classes_data,
         "total_classes": len(classes_data)
+    }
+
+@router.get("/{tenant_id}/grade/{grade_level}")
+async def get_students_by_tenant_and_grade(
+    tenant_id: UUID,
+    grade_level: int,
+    section: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get students by tenant and grade level"""
+    service = StudentService(db)
+    students = await service.get_students_by_grade(grade_level, tenant_id)
+    
+    # Filter by section if provided
+    if section:
+        students = [s for s in students if s.section == section]
+    
+    return {
+        "students": [
+            {
+                "id": str(student.id),
+                "student_id": student.student_id,
+                "first_name": student.first_name,
+                "last_name": student.last_name,
+                "full_name": f"{student.first_name} {student.last_name}",
+                "email": student.email,
+                "section": student.section,
+                "roll_number": student.roll_number,
+                "grade_level": student.grade_level,
+                "status": student.status
+            }
+            for student in students
+        ],
+        "total": len(students)
     }
 
 @router.get("/grade/{grade_level}")

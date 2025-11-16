@@ -19,7 +19,7 @@ class ClassService(BaseService[ClassModel]):
         stmt = select(self.model).where(
             self.model.tenant_id == tenant_id,
             self.model.is_deleted == False
-        )
+        ).order_by(self.model.class_name, self.model.section, self.model.grade_level)
         result = await self.db.execute(stmt)
         return result.scalars().all()
     
@@ -33,6 +33,7 @@ class ClassService(BaseService[ClassModel]):
         if tenant_id:
             stmt = stmt.where(self.model.tenant_id == tenant_id)
             
+        stmt = stmt.order_by(self.model.class_name, self.model.section, self.model.grade_level)
         result = await self.db.execute(stmt)
         return result.scalars().all()
     
@@ -72,6 +73,7 @@ class ClassService(BaseService[ClassModel]):
         if tenant_id:
             stmt = stmt.where(self.model.tenant_id == tenant_id)
             
+        stmt = stmt.order_by(self.model.class_name, self.model.section, self.model.grade_level)
         result = await self.db.execute(stmt)
         return result.scalars().all()
     
@@ -91,11 +93,14 @@ class ClassService(BaseService[ClassModel]):
     async def create(self, obj_in: dict) -> ClassModel:
         """Create new class with validation"""
         try:
-            # Check if class name already exists for the tenant and academic year
-            if obj_in.get("class_name") and obj_in.get("tenant_id") and obj_in.get("academic_year"):
+            # Check if class already exists with same tenant_id, class_name, grade_level, section, academic_year
+            required_fields = ["class_name", "tenant_id", "grade_level", "section", "academic_year"]
+            if all(obj_in.get(field) is not None for field in required_fields):
                 stmt = select(self.model).where(
                     self.model.class_name == obj_in.get("class_name"),
                     self.model.tenant_id == obj_in.get("tenant_id"),
+                    self.model.grade_level == obj_in.get("grade_level"),
+                    self.model.section == obj_in.get("section"),
                     self.model.academic_year == obj_in.get("academic_year"),
                     self.model.is_deleted == False
                 )
@@ -105,17 +110,23 @@ class ClassService(BaseService[ClassModel]):
                 if existing:
                     raise HTTPException(
                         status_code=400,
-                        detail=f"Class {obj_in.get('class_name')} already exists for academic year {obj_in.get('academic_year')}"
+                        detail=f"Class {obj_in.get('class_name')} already exists for grade {obj_in.get('grade_level')}, section {obj_in.get('section')}, academic year {obj_in.get('academic_year')}"
                     )
             
             return await super().create(obj_in)
             
         except IntegrityError as e:
             await self.db.rollback()
-            raise HTTPException(status_code=409, detail="Class already exists")
+            if "uq_class_identity" in str(e):
+                raise HTTPException(status_code=409, detail="Class already exists")
+            else:
+                raise HTTPException(status_code=400, detail=f"Database integrity error: {str(e)}")
+        except HTTPException:
+            await self.db.rollback()
+            raise
         except Exception as e:
             await self.db.rollback()
-            raise HTTPException(status_code=400, detail=str(e))
+            raise HTTPException(status_code=400, detail=f"Failed to create class: {str(e)}")
     
     async def get_class_statistics(self, class_id: UUID) -> dict:
         """Get statistics for a specific class"""
@@ -185,7 +196,15 @@ class ClassService(BaseService[ClassModel]):
         if active_only:
             filters["is_active"] = True
             
-        return await self.get_paginated(page=page, size=size, **filters)
+        result = await self.get_paginated(page=page, size=size, **filters)
+        
+        # Sort the items manually for complex ordering
+        result["items"] = sorted(
+            result["items"], 
+            key=lambda x: (x.class_name, x.section, x.grade_level)
+        )
+        
+        return result
     
     # BULK OPERATIONS USING RAW SQL FOR HIGH PERFORMANCE
     
@@ -324,7 +343,7 @@ class ClassService(BaseService[ClassModel]):
                 UPDATE classes 
                 SET {', '.join(update_parts)}, updated_at = :updated_at
                 WHERE tenant_id = :tenant_id
-                AND id IN :class_ids
+                AND id = ANY(:class_ids)
                 AND is_deleted = false
             """)
             
@@ -333,7 +352,7 @@ class ClassService(BaseService[ClassModel]):
                 {
                     "updated_at": datetime.utcnow(),
                     "tenant_id": tenant_id,
-                    "class_ids": tuple(class_ids)
+                    "class_ids": class_ids
                 }
             )
             
@@ -416,7 +435,7 @@ class ClassService(BaseService[ClassModel]):
                 SET classroom = CASE id {cases_sql} ELSE classroom END,
                     updated_at = :updated_at
                 WHERE tenant_id = :tenant_id
-                AND id IN :class_ids
+                AND id = ANY(:class_ids)
                 AND is_deleted = false
             """)
             
@@ -425,7 +444,7 @@ class ClassService(BaseService[ClassModel]):
                 {
                     "updated_at": datetime.utcnow(),
                     "tenant_id": tenant_id,
-                    "class_ids": tuple(class_ids)
+                    "class_ids": class_ids
                 }
             )
             

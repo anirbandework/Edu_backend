@@ -165,6 +165,7 @@ async def get_notifications_for_user(
     notification_type: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     unread_only: bool = Query(False),
+    include_archived: bool = Query(False, description="Include archived notifications"),
     limit: int = Query(50, le=100),
     db: AsyncSession = Depends(get_db)
 ):
@@ -172,7 +173,7 @@ async def get_notifications_for_user(
     service = NotificationService(db)
     
     try:
-        print(f"DEBUG: Getting notifications for user {user_id}, type {user_type}, tenant {tenant_id}")
+        print(f"DEBUG: Getting notifications for user {user_id}, type {user_type}, tenant {tenant_id}, include_archived={include_archived}")
         
         notifications = await service.get_notifications_for_user(
             user_id=user_id,
@@ -181,6 +182,7 @@ async def get_notifications_for_user(
             notification_type=notification_type,
             status=status,
             unread_only=unread_only,
+            include_archived=include_archived,
             limit=limit
         )
         
@@ -204,6 +206,275 @@ async def mark_notification_as_read(
         return result
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+@router.patch("/{notification_id}/archive")
+async def archive_notification(
+    notification_id: UUID,
+    user_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """Archive notification for user"""
+    try:
+        archive_sql = text("""
+            UPDATE notification_recipients 
+            SET is_archived = true, updated_at = CURRENT_TIMESTAMP
+            WHERE notification_id = :notification_id 
+            AND recipient_id = :user_id 
+            AND is_deleted = false
+        """)
+        
+        result = await db.execute(archive_sql, {
+            "notification_id": str(notification_id),
+            "user_id": str(user_id)
+        })
+        await db.commit()
+        
+        if result.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Notification not found for user")
+        
+        return {"message": "Notification archived successfully"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.patch("/{notification_id}/unarchive")
+async def unarchive_notification(
+    notification_id: UUID,
+    user_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """Unarchive notification for user"""
+    try:
+        unarchive_sql = text("""
+            UPDATE notification_recipients 
+            SET is_archived = false, updated_at = CURRENT_TIMESTAMP
+            WHERE notification_id = :notification_id 
+            AND recipient_id = :user_id 
+            AND is_deleted = false
+        """)
+        
+        result = await db.execute(unarchive_sql, {
+            "notification_id": str(notification_id),
+            "user_id": str(user_id)
+        })
+        await db.commit()
+        
+        if result.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Notification not found for user")
+        
+        return {"message": "Notification unarchived successfully"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/archived/{user_id}")
+async def get_archived_notifications(
+    user_id: UUID,
+    tenant_id: UUID = Query(..., description="Tenant ID"),
+    user_type: str = Query("school_authority", description="Type of user: student, teacher, school_authority"),
+    limit: int = Query(50, le=100),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get archived notifications for user"""
+    try:
+        archived_sql = text("""
+            SELECT 
+                n.id,
+                n.title,
+                n.message,
+                n.notification_type,
+                n.priority,
+                n.status,
+                n.created_at,
+                n.sent_at,
+                nr.read_at,
+                nr.delivered_at
+            FROM notifications n
+            JOIN notification_recipients nr ON n.id = nr.notification_id
+            WHERE nr.recipient_id = :user_id
+            AND nr.recipient_type = :user_type
+            AND n.tenant_id = :tenant_id
+            AND nr.is_archived = true
+            AND nr.is_deleted = false
+            AND n.is_deleted = false
+            ORDER BY nr.updated_at DESC
+            LIMIT :limit
+        """)
+        
+        result = await db.execute(archived_sql, {
+            "user_id": str(user_id),
+            "user_type": user_type,
+            "tenant_id": str(tenant_id),
+            "limit": limit
+        })
+        notifications = result.fetchall()
+        
+        return [
+            {
+                "id": str(n[0]),
+                "title": n[1],
+                "message": n[2],
+                "notification_type": n[3],
+                "priority": n[4],
+                "status": n[5],
+                "created_at": n[6].isoformat() if n[6] else None,
+                "sent_at": n[7].isoformat() if n[7] else None,
+                "read_at": n[8].isoformat() if n[8] else None,
+                "delivered_at": n[9].isoformat() if n[9] else None,
+                "is_archived": True
+            } for n in notifications
+        ]
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/{notification_id}/delete")
+async def delete_notification_for_user(
+    notification_id: UUID,
+    user_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """Permanently delete notification for user (soft delete)"""
+    try:
+        delete_sql = text("""
+            UPDATE notification_recipients 
+            SET is_deleted = true, updated_at = CURRENT_TIMESTAMP
+            WHERE notification_id = :notification_id 
+            AND recipient_id = :user_id 
+            AND is_deleted = false
+        """)
+        
+        result = await db.execute(delete_sql, {
+            "notification_id": str(notification_id),
+            "user_id": str(user_id)
+        })
+        await db.commit()
+        
+        if result.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Notification not found for user")
+        
+        return {"message": "Notification deleted successfully"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/sent-by/{sender_id}")
+async def get_notifications_sent_by_user(
+    sender_id: UUID,
+    tenant_id: UUID = Query(...),
+    limit: int = Query(50, le=100),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get all notifications sent by a specific user with recipient IDs (optimized)"""
+    try:
+        # Single query to get notifications with recipients using JSON aggregation
+        notifications_sql = text("""
+            SELECT 
+                n.id,
+                n.title,
+                n.message,
+                n.notification_type,
+                n.priority,
+                n.total_recipients,
+                n.delivered_count,
+                n.status,
+                n.created_at,
+                n.sent_at,
+                COALESCE(
+                    JSON_AGG(
+                        JSON_BUILD_OBJECT(
+                            'recipient_id', nr.recipient_id,
+                            'recipient_type', nr.recipient_type,
+                            'recipient_name', nr.recipient_name
+                        )
+                    ) FILTER (WHERE nr.id IS NOT NULL),
+                    '[]'::json
+                ) as recipients
+            FROM notifications n
+            LEFT JOIN notification_recipients nr ON n.id = nr.notification_id AND nr.is_deleted = false
+            WHERE n.sender_id = :sender_id
+            AND n.tenant_id = :tenant_id
+            AND n.is_deleted = false
+            GROUP BY n.id, n.title, n.message, n.notification_type, n.priority, 
+                     n.total_recipients, n.delivered_count, n.status, n.created_at, n.sent_at
+            ORDER BY n.created_at DESC
+            LIMIT :limit
+        """)
+        
+        result = await db.execute(notifications_sql, {
+            "sender_id": str(sender_id),
+            "tenant_id": str(tenant_id),
+            "limit": limit
+        })
+        notifications = result.fetchall()
+        
+        return [
+            {
+                "id": str(n[0]),
+                "title": n[1],
+                "message": n[2],
+                "notification_type": n[3],
+                "priority": n[4],
+                "total_recipients": n[5],
+                "delivered_count": n[6],
+                "status": n[7],
+                "created_at": n[8].isoformat() if n[8] else None,
+                "sent_at": n[9].isoformat() if n[9] else None,
+                "recipients": n[10] if n[10] else []
+            } for n in notifications
+        ]
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/archive-stats/{user_id}")
+async def get_archive_statistics(
+    user_id: UUID,
+    tenant_id: UUID = Query(..., description="Tenant ID"),
+    user_type: str = Query("school_authority", description="Type of user: student, teacher, school_authority"),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get archive statistics for user"""
+    try:
+        stats_sql = text("""
+            SELECT 
+                COUNT(*) as total_archived,
+                COUNT(CASE WHEN nr.updated_at >= CURRENT_DATE - INTERVAL '30 days' THEN 1 END) as archived_this_month,
+                COALESCE(SUM(LENGTH(n.message)), 0) as estimated_storage_bytes
+            FROM notification_recipients nr
+            JOIN notifications n ON nr.notification_id = n.id
+            WHERE nr.recipient_id = :user_id
+            AND nr.recipient_type = :user_type
+            AND n.tenant_id = :tenant_id
+            AND nr.is_archived = true
+            AND nr.is_deleted = false
+            AND n.is_deleted = false
+        """)
+        
+        result = await db.execute(stats_sql, {
+            "user_id": str(user_id),
+            "user_type": user_type,
+            "tenant_id": str(tenant_id)
+        })
+        stats = result.fetchone()
+        
+        return {
+            "total_archived": stats[0] if stats else 0,
+            "archived_this_month": stats[1] if stats else 0,
+            "estimated_storage_kb": round((stats[2] if stats else 0) / 1024, 2)
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # DEBUG ENDPOINTS
 @router.get("/debug/all-notifications")
@@ -528,3 +799,111 @@ async def debug_available_classes(
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Debug failed: {str(e)}")
+
+@router.get("/debug/archive-test/{user_id}")
+async def debug_archive_test(
+    user_id: str,
+    tenant_id: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """Debug: Test archive functionality"""
+    try:
+        # Check current archive status
+        check_sql = text("""
+            SELECT 
+                nr.notification_id,
+                nr.is_archived,
+                n.title
+            FROM notification_recipients nr
+            JOIN notifications n ON nr.notification_id = n.id
+            WHERE nr.recipient_id = :user_id
+            AND n.tenant_id = :tenant_id
+            AND nr.is_deleted = false
+            ORDER BY n.created_at DESC
+            LIMIT 5
+        """)
+        
+        result = await db.execute(check_sql, {
+            "user_id": user_id,
+            "tenant_id": tenant_id
+        })
+        notifications = result.fetchall()
+        
+        return {
+            "user_id": user_id,
+            "tenant_id": tenant_id,
+            "notifications": [
+                {
+                    "notification_id": str(n[0]),
+                    "is_archived": n[1],
+                    "title": n[2]
+                } for n in notifications
+            ]
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Debug failed: {str(e)}")
+
+@router.post("/debug/setup-archive-column")
+async def setup_archive_column(
+    db: AsyncSession = Depends(get_db)
+):
+    """Debug: Setup is_archived column if it doesn't exist"""
+    try:
+        # Check if column exists
+        check_column_sql = text("""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name = 'notification_recipients' 
+            AND column_name = 'is_archived'
+        """)
+        
+        result = await db.execute(check_column_sql)
+        column_exists = result.fetchone()
+        
+        if column_exists:
+            return {"message": "is_archived column already exists"}
+        
+        # Add the column
+        add_column_sql = text("""
+            ALTER TABLE notification_recipients 
+            ADD COLUMN is_archived BOOLEAN DEFAULT FALSE
+        """)
+        
+        await db.execute(add_column_sql)
+        await db.commit()
+        
+        return {"message": "is_archived column added successfully"}
+        
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Setup failed: {str(e)}")
+
+@router.get("/debug/check-archive-column")
+async def check_archive_column(
+    db: AsyncSession = Depends(get_db)
+):
+    """Debug: Check if is_archived column exists"""
+    try:
+        check_sql = text("""
+            SELECT column_name, data_type, column_default
+            FROM information_schema.columns 
+            WHERE table_name = 'notification_recipients' 
+            AND column_name = 'is_archived'
+        """)
+        
+        result = await db.execute(check_sql)
+        column_info = result.fetchone()
+        
+        if column_info:
+            return {
+                "exists": True,
+                "column_name": column_info[0],
+                "data_type": column_info[1],
+                "default_value": column_info[2]
+            }
+        else:
+            return {"exists": False}
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Check failed: {str(e)}")

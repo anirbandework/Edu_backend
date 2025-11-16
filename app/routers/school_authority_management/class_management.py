@@ -3,6 +3,7 @@ from typing import List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from pydantic import BaseModel
 from ...core.database import get_db
 from ...models.tenant_specific.class_model import ClassModel
@@ -19,7 +20,6 @@ class ClassCreate(BaseModel):
     section: str
     academic_year: str
     maximum_students: int = 40
-    current_students: int = 0
     classroom: Optional[str] = None
     is_active: bool = True
 
@@ -66,6 +66,10 @@ class BulkDeleteRequest(BaseModel):
 class AddStudentsToClass(BaseModel):
     student_ids: List[UUID]
     academic_year: str
+
+class AssignTeachersToClass(BaseModel):
+    teacher_ids: List[UUID]
+    subject_name: str
 
 router = APIRouter(prefix="/api/v1/school_authority/classes", tags=["School Authority - Class Management"])
 
@@ -137,6 +141,8 @@ async def create_class(
     service = ClassService(db)
     
     class_dict = class_data.model_dump()
+    # Auto-set current_students to 0 for new classes
+    class_dict["current_students"] = 0
     class_obj = await service.create(class_dict)
     
     return {
@@ -458,7 +464,6 @@ async def get_class_students(
     db: AsyncSession = Depends(get_db)
 ):
     """Get all students enrolled in a specific class"""
-    from sqlalchemy import select
     
     # Verify class exists
     class_stmt = select(ClassModel).where(ClassModel.id == class_id, ClassModel.is_deleted == False)
@@ -572,3 +577,198 @@ async def get_classes_by_academic_year(
         }
         for class_obj in classes
     ]
+
+@router.post("/{class_id}/teachers", response_model=dict)
+async def assign_teachers_to_class(
+    class_id: UUID,
+    request: AssignTeachersToClass,
+    db: AsyncSession = Depends(get_db)
+):
+    """Assign teachers to a class"""
+    from ...models.tenant_specific.teacher import Teacher
+    
+    try:
+        # Get class
+        class_stmt = select(ClassModel).where(ClassModel.id == class_id, ClassModel.is_deleted == False)
+        class_result = await db.execute(class_stmt)
+        class_obj = class_result.scalar_one_or_none()
+        
+        if not class_obj:
+            raise HTTPException(status_code=404, detail="Class not found")
+        
+        # Get current assignments (make a copy to avoid reference issues)
+        current_assignments = list(class_obj.assigned_teachers) if class_obj.assigned_teachers else []
+        
+        # Add new teacher assignments
+        for teacher_id in request.teacher_ids:
+            # Verify teacher exists
+            teacher_stmt = select(Teacher).where(Teacher.id == teacher_id, Teacher.is_deleted == False)
+            teacher_result = await db.execute(teacher_stmt)
+            teacher = teacher_result.scalar_one_or_none()
+            
+            if teacher:
+                # Check if this teacher-subject combination already exists
+                existing = next((a for a in current_assignments if a.get("teacher_id") == str(teacher_id) and a.get("subject_name") == request.subject_name), None)
+                if not existing:
+                    # Add new teacher-subject assignment
+                    current_assignments.append({
+                        "teacher_id": str(teacher_id),
+                        "teacher_name": f"{teacher.first_name} {teacher.last_name}",
+                        "subject_name": request.subject_name
+                    })
+        
+        # Update class
+        class_obj.assigned_teachers = current_assignments
+        await db.commit()
+        await db.refresh(class_obj)
+        
+        return {
+            "message": f"Successfully assigned teachers to class",
+            "class_id": str(class_id),
+            "assigned_teachers": current_assignments
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/{class_id}/teachers", response_model=dict)
+async def get_class_teachers(
+    class_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """Get all teachers assigned to a specific class"""
+    # Get class
+    class_stmt = select(ClassModel).where(ClassModel.id == class_id, ClassModel.is_deleted == False)
+    class_result = await db.execute(class_stmt)
+    class_obj = class_result.scalar_one_or_none()
+    
+    if not class_obj:
+        raise HTTPException(status_code=404, detail="Class not found")
+    
+    assigned_teachers = class_obj.assigned_teachers or []
+    
+    return {
+        "class_info": {
+            "id": str(class_obj.id),
+            "class_name": class_obj.class_name,
+            "grade_level": class_obj.grade_level,
+            "section": class_obj.section,
+            "academic_year": class_obj.academic_year,
+            "classroom": class_obj.classroom
+        },
+        "teachers": assigned_teachers,
+        "total_teachers": len(assigned_teachers)
+    }
+
+@router.get("/teachers/available", response_model=dict)
+async def get_available_teachers(
+    tenant_id: UUID = Query(...),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get all available teachers for assignment"""
+    from ...models.tenant_specific.teacher import Teacher
+    
+    # Get active teachers for the tenant
+    teachers_stmt = select(Teacher).where(
+        Teacher.tenant_id == tenant_id,
+        Teacher.status == "active",
+        Teacher.is_deleted == False
+    ).order_by(Teacher.first_name, Teacher.last_name)
+    
+    result = await db.execute(teachers_stmt)
+    teachers = result.scalars().all()
+    
+    teachers_data = [
+        {
+            "id": str(teacher.id),
+            "teacher_id": teacher.teacher_id,
+            "first_name": teacher.first_name,
+            "last_name": teacher.last_name,
+            "full_name": f"{teacher.first_name or ''} {teacher.last_name or ''}".strip(),
+            "email": teacher.email,
+            "phone": teacher.phone,
+            "position": teacher.position,
+            "qualification": teacher.qualification,
+            "experience_years": teacher.experience_years
+        }
+        for teacher in teachers
+    ]
+    
+    return {
+        "teachers": teachers_data,
+        "total_teachers": len(teachers_data),
+        "tenant_id": str(tenant_id)
+    }
+
+@router.get("/students/available-for-class/{class_id}", response_model=dict)
+async def get_available_students_for_class(
+    class_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """Get students available for enrollment in a specific class"""
+    from ...models.tenant_specific.student import Student
+    from ...models.tenant_specific.enrollment import Enrollment
+    
+    # Get class details
+    class_stmt = select(ClassModel).where(ClassModel.id == class_id, ClassModel.is_deleted == False)
+    class_result = await db.execute(class_stmt)
+    class_obj = class_result.scalar_one_or_none()
+    
+    if not class_obj:
+        raise HTTPException(status_code=404, detail="Class not found")
+    
+    # Get students with same grade level OR no grade level (null)
+    # AND not already enrolled in any active class for current academic year
+    students_stmt = (
+        select(Student)
+        .outerjoin(
+            Enrollment,
+            (Student.id == Enrollment.student_id) &
+            (Enrollment.academic_year == class_obj.academic_year) &
+            (Enrollment.status == "active") &
+            (Enrollment.is_deleted == False)
+        )
+        .where(
+            Student.tenant_id == class_obj.tenant_id,
+            Student.is_deleted == False,
+            Student.status == "active",
+            (Student.grade_level == class_obj.grade_level) | (Student.grade_level.is_(None)) | (Student.grade_level == 0),
+            Enrollment.id.is_(None)  # Not enrolled in any active class
+        )
+        .order_by(Student.first_name, Student.last_name)
+    )
+    
+    result = await db.execute(students_stmt)
+    students = result.scalars().all()
+    
+    students_data = [
+        {
+            "id": str(student.id),
+            "student_id": student.student_id,
+            "first_name": student.first_name,
+            "last_name": student.last_name,
+            "full_name": f"{student.first_name or ''} {student.last_name or ''}".strip(),
+            "email": student.email,
+            "phone": student.phone,
+            "grade_level": student.grade_level,
+            "section": student.section,
+            "admission_number": student.admission_number,
+            "roll_number": student.roll_number
+        }
+        for student in students
+    ]
+    
+    return {
+        "class_info": {
+            "id": str(class_obj.id),
+            "class_name": class_obj.class_name,
+            "grade_level": class_obj.grade_level,
+            "section": class_obj.section,
+            "academic_year": class_obj.academic_year,
+            "available_spots": class_obj.maximum_students - class_obj.current_students
+        },
+        "available_students": students_data,
+        "total_available": len(students_data)
+    }
