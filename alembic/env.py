@@ -51,7 +51,21 @@ from app.models.tenant_specific.timetable import (
     TimetableAuditLog
 )
 
-# from app.models.tenant_specific.teacher_assignment import TeacherAssignment  # Commented out - model doesn't exist
+# Assessment system models
+from app.models.tenant_specific.assesment.quiz_question_models import (
+    Topic, Category, Question, Quiz, QuizQuestion, QuizAttempt, QuizAnswer,
+    QuestionTemplate, QuestionVersion
+)
+from app.models.tenant_specific.assesment.cbse_curriculum_models import (
+    BookChunk, CBSESamplePaper, PaperSection, SectionQuestion
+)
+from app.models.tenant_specific.assesment.grading_system_models import (
+    Assessment, AssessmentSubmission, StudentGrade, GradeScale, ReportCard
+)
+
+# Chat system models
+from app.models.chat.chat_room import ChatRoom
+from app.models.chat.chat_message import ChatMessage
 
 
 config = context.config

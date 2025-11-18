@@ -1,0 +1,38 @@
+# Environment
+.env
+.env.local
+.env.production
+
+# Virtual Environment
+venv/
+env/
+.venv/
+
+# Cache
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.coverage
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Database
+*.db
+*.sqlite3
+
+# Uploads
+uploads/
+exports/

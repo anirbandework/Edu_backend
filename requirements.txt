@@ -100,3 +100,11 @@ orjson==3.9.10
 
 greenlet>=2.0.0
 typing-extensions>=4.8.0
+
+# Chat system requirements
+websockets==12.0
+python-socketio==5.10.0
+
+# Background tasks
+celery==5.5.3
+kombu==5.5.4
