@@ -2,6 +2,7 @@
 .env
 .env.local
 .env.production
+start_dev.sh
 
 # Virtual Environment
 venv/
