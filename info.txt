@@ -1,4 +1,0 @@
-├── models/shared/tenant.py          # Database model
-├── schemas/tenant_schemas.py        # API contract models  
-├── routers/tenant.py               # Route handlers
-└── services/tenant_service.py      # Business logic

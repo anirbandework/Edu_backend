@@ -81,5 +81,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=30s --start-period=15s --retries=3 \
   CMD curl -f http://localhost:8000/health || exit 1
 
-# Production command - enhanced for bulk operations
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+# Production command - optimized for 100k users
+CMD ["gunicorn", "app.main:app", "-w", "4", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000", "--max-requests", "1000", "--max-requests-jitter", "100", "--preload"]

@@ -25,7 +25,12 @@ from .routers.school_authority_management.class_management import router as clas
 from .routers.school_authority_management.enrollment import router as enrollment_router
 from .routers.school_authority_management.notifications import router as notifications_router
 from .routers.school_authority_management.attendance import router as attendance_router
-from .routers.school_authority_management.timetable import router as timetable_router  
+from .routers.school_authority_management.timetable import router as timetable_router
+from .routers.chat.chat_router import router as chat_router
+from .routers.chat.websocket_router import router as websocket_router
+from .routers.school_authority_management.assesment import assessment_router
+from .core.error_handlers import assessment_exception_handler, general_exception_handler, AssessmentException
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -107,10 +112,14 @@ async def http_exception_handler(request: Request, exc: HTTPException):
         content={"detail": exc.detail}
     )
 
+# Assessment system exception handlers
+@app.exception_handler(AssessmentException)
+async def handle_assessment_exception(request: Request, exc: AssessmentException):
+    return await assessment_exception_handler(request, exc)
+
 # Global exception handler for all other exceptions
 @app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    """Handle all unhandled exceptions"""
+async def handle_general_exception(request: Request, exc: Exception):
     logger.error(f"Unhandled exception on {request.url.path}: {exc}")
     return JSONResponse(
         status_code=500,
@@ -185,6 +194,10 @@ app.include_router(enrollment_router)
 app.include_router(notifications_router)
 app.include_router(attendance_router)
 app.include_router(timetable_router)
+app.include_router(chat_router)
+app.include_router(websocket_router)
+app.include_router(assessment_router)
+
 
 
 
@@ -196,10 +209,13 @@ async def root():
         "version": settings.app_version,
         "features": [
             "Tenant Management",
-            "School Authority Management",  # UPDATED FEATURES LIST
+            "School Authority Management",
+            "Assessment System",
+            "AI-Powered Learning Analytics",
             "Connection Pooling",
-            "Bulk Operations",  
+            "Bulk Operations",
             "Background Processing",
+            "Real-time Chat System",
         ]
     }
 
@@ -221,9 +237,14 @@ async def system_status():
         "database_pools": pool_status,
         "features": {
             "tenant_management": True,
-            "school_authority_management": True,  # NEW FEATURE FLAG
-            "bulk_operations": True,  # Set to True when implemented
-            "background_tasks": True,  # Set to True when implemented
+            "school_authority_management": True,
+            "assessment_system": True,
+            "ai_learning_analytics": True,
+            "quiz_management": True,
+            "cbse_content": True,
+            "grading_system": True,
+            "bulk_operations": True,
+            "background_tasks": True,
             "connection_pooling": True,
             "cache_manager": True
         }
